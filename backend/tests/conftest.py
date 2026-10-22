@@ -2,6 +2,8 @@
 
 Fake adapters get registered here as they appear: `frozen_clock`, `recording_randomness`.
 `signing_key` gives a test an active token signing key.
+`owner` is the owner account (before TOTP enrollment); `logged_in_client` is a test client that
+finished password + TOTP (Django `login()` done), with `frozen_clock` running.
 """
 
 import hashlib
@@ -9,11 +11,19 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from django.contrib.auth.models import User
+from django.test import Client
+from django.utils import timezone
 
 from adapters.clock import set_clock
 from adapters.randomness import set_randomness
 from oauth.models import SigningKey
+from services.owner import create_owner
 from services.signing import create_signing_key
+from services.totp import current_code, enrollment_device
+
+OWNER_USERNAME = "farrar142"
+OWNER_PASSWORD = "correct horse battery staple"
 
 
 class FrozenClock:
@@ -30,9 +40,13 @@ class FrozenClock:
 
 
 @pytest.fixture
-def frozen_clock() -> Iterator[FrozenClock]:
-    """Freeze `get_clock().now()` at 2026-01-01T00:00:00Z; `advance(seconds)` moves it."""
+def frozen_clock(monkeypatch: pytest.MonkeyPatch) -> Iterator[FrozenClock]:
+    """Freeze `get_clock().now()` at 2026-01-01T00:00:00Z; `advance(seconds)` moves it.
+
+    Django's own `timezone.now()` (session expiry, last_login) follows the same clock.
+    """
     clock = FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))
+    monkeypatch.setattr(timezone, "now", clock.now)
     previous = set_clock(clock)
     yield clock
     set_clock(previous)
@@ -64,3 +78,23 @@ def recording_randomness() -> Iterator[RecordingRandomness]:
 def signing_key(db: None) -> SigningKey:
     """An active signing key (same as `manage.py signing_keys create`)."""
     return create_signing_key()
+
+
+@pytest.fixture
+def owner(db: None) -> User:
+    """The owner account, as `manage.py owner create` makes it (TOTP not enrolled yet)."""
+    return create_owner(OWNER_USERNAME, OWNER_PASSWORD)
+
+
+def totp_code(user: User) -> str:
+    """The code the owner's authenticator shows at `get_clock().now()`."""
+    return current_code(enrollment_device(user))
+
+
+@pytest.fixture
+def logged_in_client(client: Client, owner: User, frozen_clock: FrozenClock) -> Client:
+    """A client logged in with password + TOTP (enrolled on the way). The code's time step is
+    used up: advance the clock 30 s before asking for another code."""
+    client.post("/login", {"username": OWNER_USERNAME, "password": OWNER_PASSWORD})
+    client.post("/totp/setup", {"code": totp_code(owner)})
+    return client

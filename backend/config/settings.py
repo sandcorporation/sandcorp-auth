@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "core",
+    "accounts",
     "oauth",
 ]
 
@@ -43,6 +44,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "accounts.middleware.TotpEnrollmentMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -95,6 +97,23 @@ if not SIGNING_KEY_ENCRYPTION_KEY:
     raise RuntimeError("SIGNING_KEY_ENCRYPTION_KEY is required when DJANGO_DEBUG is not 1")
 # Access token lifetime; a rotated-out signing key stays in the JWKS this long.
 ACCESS_TOKEN_LIFETIME = timedelta(minutes=10)
+
+# Owner login (accounts app). Django `login()` happens only after password + TOTP.
+LOGIN_URL = "/login"
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {"min_length": 12},
+    },
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+]
+# Sessions end after SESSION_AGE_SECONDS (default 12 h) or when the browser closes.
+SESSION_COOKIE_AGE = int(env("SESSION_AGE_SECONDS", str(12 * 60 * 60)))
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
 
 # Django admin lives on a hard-to-guess path in production.
 ADMIN_PATH = env("DJANGO_ADMIN_PATH", "admin/").strip("/") + "/"

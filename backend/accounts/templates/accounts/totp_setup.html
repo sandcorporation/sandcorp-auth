@@ -1,0 +1,17 @@
+{% extends "accounts/base.html" %}
+{% block title %}인증 앱 등록{% endblock %}
+{% block content %}
+<h1>인증 앱 등록</h1>
+<p class="lead">처음 로그인하려면 인증 앱(Google Authenticator, 1Password 등)을 등록해야 합니다. 등록을 마치기 전에는 다른 화면을 쓸 수 없습니다.</p>
+<div class="qr" aria-label="TOTP 등록 QR 코드">{{ qr_svg }}</div>
+<label>QR을 찍을 수 없으면 이 키를 직접 넣으세요 ({{ username }})</label>
+<code class="secret">{{ secret }}</code>
+{% if error %}<div class="error" role="alert" style="margin-top:16px">{{ error }}</div>{% endif %}
+<form method="post">
+  {% csrf_token %}
+  <label for="code">앱에 뜬 6자리 코드</label>
+  <input type="text" class="code" id="code" name="code" inputmode="numeric" pattern="[0-9 ]*" maxlength="7" autocomplete="one-time-code" required>
+  <button type="submit">등록하고 로그인</button>
+</form>
+<form method="post" action="/logout">{% csrf_token %}<button type="submit" class="link">취소하고 로그아웃</button></form>
+{% endblock %}

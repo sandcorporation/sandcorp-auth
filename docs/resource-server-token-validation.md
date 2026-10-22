@@ -21,7 +21,7 @@ portfolio(`https://sandcorp.co.kr`)와 뉴스(`https://news.sandcorp.co.kr`)가 
 | `exp` 허용 오차 | 30초(`now > exp + 30`이면 만료) |
 | portfolio 리소스(`aud`) | `https://sandcorp.co.kr/mcp` |
 | 뉴스 리소스(`aud`) | `https://news.sandcorp.co.kr/mcp` |
-| `sub` | 대표 계정의 username. 사이트 설정값 `AUTH_OWNER_SUB`와 비교 |
+| `sub` | 대표 계정의 username(예: `farrar142`). 사이트 설정값 `AUTH_OWNER_SUB`와 비교 |
 
 ### 스코프
 
