@@ -27,6 +27,7 @@ from services.confidential_clients import (
     rotate_client_secret,
 )
 from services.consents import revoke_consent
+from services.redirect_uris import valid_redirect_uri
 
 if TYPE_CHECKING:
     _ResourceAdmin = admin.ModelAdmin[Resource]
@@ -86,6 +87,37 @@ class ConfidentialClientAddForm(_ClientForm):
             raise forms.ValidationError(str(error)) from None
 
 
+class ClientChangeForm(_ClientForm):
+    """The admin change form: edited redirect URIs follow the registration rules, https only
+    for confidential clients and the shared rule (https, or http on loopback) for public ones."""
+
+    class Meta:
+        model = Client
+        fields = "__all__"
+
+    def clean_redirect_uris(self) -> list[str]:
+        uris: object = self.cleaned_data["redirect_uris"]
+        if not isinstance(uris, list) or not uris:
+            raise forms.ValidationError("리다이렉트 URI 목록이 하나 이상 있어야 합니다")
+        checked: list[str] = []
+        for uri in uris:
+            if not isinstance(uri, str):
+                raise forms.ValidationError(f"리다이렉트 URI는 문자열이어야 합니다: {uri!r}")
+            checked.append(uri)
+        if self.instance.kind == Client.Kind.CONFIDENTIAL:
+            try:
+                return confidential_redirect_uris(checked)
+            except InvalidRedirectUri as error:
+                raise forms.ValidationError(str(error)) from None
+        for uri in checked:
+            if not valid_redirect_uri(uri):
+                raise forms.ValidationError(
+                    "리다이렉트 URI가 규칙(https, 또는 localhost·127.0.0.1의 http)에 "
+                    f"맞지 않습니다: {uri}"
+                )
+        return checked
+
+
 @admin.register(Client)
 class ClientAdmin(_ClientAdmin):
     """Public clients are registered by CIMD/DCR; here they are seen, revoked (inactive) and,
@@ -122,6 +154,8 @@ class ClientAdmin(_ClientAdmin):
         if obj is None:
             kwargs["form"] = ConfidentialClientAddForm
             kwargs["fields"] = ["name", "redirect_uris_text"]
+        else:
+            kwargs["form"] = ClientChangeForm
         return super().get_form(request, obj, change, **kwargs)
 
     def get_fieldsets(self, request: HttpRequest, obj: Client | None = None) -> "_FieldsetSpec":
