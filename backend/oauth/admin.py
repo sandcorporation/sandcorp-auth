@@ -1,8 +1,11 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from django.contrib import admin
+from django import forms
+from django.contrib import admin, messages
 from django.db.models import QuerySet
-from django.http import HttpRequest
+from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed, HttpResponseRedirect
+from django.shortcuts import get_object_or_404
+from django.urls import URLPattern, path, reverse
 
 from core.http import client_ip
 from oauth.models import (
@@ -16,11 +19,21 @@ from oauth.models import (
 )
 from oauth.tokens import revoke_family
 from services import audit
+from services.confidential_clients import (
+    InvalidRedirectUri,
+    NotConfidential,
+    confidential_redirect_uris,
+    create_confidential_client,
+    rotate_client_secret,
+)
 from services.consents import revoke_consent
 
 if TYPE_CHECKING:
     _ResourceAdmin = admin.ModelAdmin[Resource]
     _ClientAdmin = admin.ModelAdmin[Client]
+    _ClientForm = forms.ModelForm[Client]
+    from django.contrib.admin.options import _FieldsetSpec
+
     _ScopeInline = admin.TabularInline[Scope, Resource]
     _ConsentAdmin = admin.ModelAdmin[Consent]
     _AuthorizationCodeAdmin = admin.ModelAdmin[AuthorizationCode]
@@ -33,6 +46,7 @@ else:  # generic only in django-stubs
     _AuthorizationCodeAdmin = admin.ModelAdmin
     _ResourceAdmin = admin.ModelAdmin
     _ClientAdmin = admin.ModelAdmin
+    _ClientForm = forms.ModelForm
     _ScopeInline = admin.TabularInline
 
 
@@ -50,10 +64,33 @@ class ResourceAdmin(_ResourceAdmin):
     inlines = [ScopeInline]
 
 
+class ConfidentialClientAddForm(_ClientForm):
+    """The admin add form: only confidential clients are added here (public ones come from
+    DCR/CIMD). Name and https redirect URIs, one per line; the rest is fixed by the service."""
+
+    redirect_uris_text = forms.CharField(
+        label="리다이렉트 URI",
+        widget=forms.Textarea(attrs={"rows": 3}),
+        help_text="한 줄에 하나, https만. 정확히 일치해야 한다(끝 슬래시 포함).",
+    )
+
+    class Meta:
+        model = Client
+        fields = ["name"]
+
+    def clean_redirect_uris_text(self) -> list[str]:
+        text = self.cleaned_data["redirect_uris_text"]
+        try:
+            return confidential_redirect_uris(str(text).splitlines())
+        except InvalidRedirectUri as error:
+            raise forms.ValidationError(str(error)) from None
+
+
 @admin.register(Client)
 class ClientAdmin(_ClientAdmin):
-    """Clients are registered by CIMD/DCR (or by a later admin flow); here they are seen,
-    revoked (inactive) and, for CIMD, have their cached metadata document dropped."""
+    """Public clients are registered by CIMD/DCR; here they are seen, revoked (inactive) and,
+    for CIMD, have their cached metadata document dropped. Confidential clients (the sites'
+    admin login) are added here: the secret is shown once in a message, then only its hash."""
 
     list_display = ["name", "client_id", "registered_via", "kind", "active", "created_at"]
     list_filter = ["registered_via", "kind", "active"]
@@ -61,6 +98,7 @@ class ClientAdmin(_ClientAdmin):
     ordering = ["-created_at"]
     readonly_fields = [
         "client_id",
+        "kind",
         "registered_via",
         "created_at",
         "secret_hash",
@@ -69,9 +107,86 @@ class ClientAdmin(_ClientAdmin):
         "metadata_document",
     ]
     actions = ["deactivate", "clear_cimd_cache"]
+    change_form_template = "admin/oauth/client/change_form.html"
 
     def has_add_permission(self, request: HttpRequest) -> bool:
-        return False
+        return True
+
+    def get_form(
+        self,
+        request: HttpRequest,
+        obj: Client | None = None,
+        change: bool = False,
+        **kwargs: Any,  # noqa: ANN401  # passed through to ModelAdmin.get_form untouched
+    ) -> "type[forms.ModelForm[Client]]":
+        if obj is None:
+            kwargs["form"] = ConfidentialClientAddForm
+            kwargs["fields"] = ["name", "redirect_uris_text"]
+        return super().get_form(request, obj, change, **kwargs)
+
+    def get_fieldsets(self, request: HttpRequest, obj: Client | None = None) -> "_FieldsetSpec":
+        if obj is None:
+            return [(None, {"fields": ["name", "redirect_uris_text"]})]
+        return super().get_fieldsets(request, obj)
+
+    def get_readonly_fields(self, request: HttpRequest, obj: Client | None = None) -> list[str]:
+        return [] if obj is None else list(self.readonly_fields)
+
+    def save_model(
+        self,
+        request: HttpRequest,
+        obj: Client,
+        form: "forms.ModelForm[Client]",
+        change: bool,
+    ) -> None:
+        if change:
+            super().save_model(request, obj, form, change)
+            return
+        issued = create_confidential_client(
+            obj.name,
+            form.cleaned_data["redirect_uris_text"],
+            actor=request.user.get_username(),
+            ip=client_ip(request),
+        )
+        obj.pk = issued.client.pk
+        obj.refresh_from_db()
+        self._show_secret_once(
+            request, issued.client, issued.secret, "기밀 클라이언트를 만들었습니다."
+        )
+
+    def get_urls(self) -> list[URLPattern]:
+        rotate = path(
+            "<int:object_id>/rotate-secret/",
+            self.admin_site.admin_view(self.rotate_secret_view),
+            name="oauth_client_rotate_secret",
+        )
+        return [rotate, *super().get_urls()]
+
+    def rotate_secret_view(self, request: HttpRequest, object_id: int) -> HttpResponse:
+        """POST only (a button on the change page): a new secret, shown once."""
+        client = get_object_or_404(Client, pk=object_id)
+        change_url = reverse("admin:oauth_client_change", args=[client.pk])
+        if request.method != "POST" or not self.has_change_permission(request, client):
+            return HttpResponseNotAllowed(["POST"])
+        try:
+            secret = rotate_client_secret(
+                client, actor=request.user.get_username(), ip=client_ip(request)
+            )
+        except NotConfidential:
+            self.message_user(request, "공개 클라이언트에는 시크릿이 없습니다.", messages.ERROR)
+            return HttpResponseRedirect(change_url)
+        self._show_secret_once(
+            request, client, secret, "시크릿을 새로 발급했습니다. 옛 시크릿은 이제 통하지 않습니다."
+        )
+        return HttpResponseRedirect(change_url)
+
+    @staticmethod
+    def _show_secret_once(request: HttpRequest, client: Client, secret: str, headline: str) -> None:
+        messages.success(
+            request,
+            f"{headline} client_id: {client.client_id} / client_secret: {secret} — "
+            "시크릿은 지금 한 번만 보입니다(저장된 것은 해시뿐). 사이트 설정에 바로 넣으세요.",
+        )
 
     @admin.action(description="선택한 클라이언트 폐기(비활성)")
     def deactivate(self, request: HttpRequest, queryset: QuerySet[Client]) -> None:
