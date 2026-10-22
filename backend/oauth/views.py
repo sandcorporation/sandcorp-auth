@@ -51,6 +51,22 @@ def register(request: HttpRequest) -> HttpResponse:
     return response
 
 
+@csrf_exempt
+@require_POST
+def token(request: HttpRequest) -> HttpResponse:
+    """The token endpoint (RFC 6749 3.2): authlib runs the grant (`authorization_code` here).
+    Every request counts toward the per-IP limit. Neither tokens nor errors may be cached."""
+    ip = client_ip(request)
+    blocked = throttle.check("token", f"ip:{ip}")
+    if not blocked.allowed:
+        limited = JsonResponse({"error": "too_many_requests"}, status=429)
+        limited["Retry-After"] = str(blocked.retry_after)
+        return _no_store(limited)
+    throttle.hit("token", f"ip:{ip}")
+    response: HttpResponse = server.create_token_response(request)
+    return _no_store(response)
+
+
 @require_http_methods(["GET", "POST"])
 def authorize(request: HttpRequest) -> HttpResponse:
     """The authorization endpoint (RFC 6749 4.1 with PKCE S256 and RFC 8707 `resource`).
@@ -169,4 +185,5 @@ def _authorization_error(request: HttpRequest, error: OAuth2Error) -> HttpRespon
 
 def _no_store(response: HttpResponse) -> HttpResponse:
     response["Cache-Control"] = "no-store"
+    response["Pragma"] = "no-cache"
     return response

@@ -25,6 +25,8 @@ CLIENT_CIMD_REJECTED: Final = "client.cimd_rejected"
 CONSENT_GRANTED: Final = "consent.granted"
 CONSENT_DENIED: Final = "consent.denied"
 AUTHORIZATION_CODE_ISSUED: Final = "authorization_code.issued"
+TOKEN_ISSUED: Final = "token.issued"
+TOKEN_CODE_REUSE_DETECTED: Final = "token.code_reuse_detected"
 
 SECRET_KEYS: Final = frozenset({"password", "code", "token", "secret", "otp"})
 

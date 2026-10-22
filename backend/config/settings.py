@@ -99,6 +99,7 @@ if not SIGNING_KEY_ENCRYPTION_KEY:
 # Access token lifetime; a rotated-out signing key stays in the JWKS this long.
 ACCESS_TOKEN_LIFETIME = timedelta(minutes=10)
 AUTHORIZATION_CODE_LIFETIME = timedelta(minutes=5)
+REFRESH_TOKEN_LIFETIME = timedelta(days=90)
 
 # Owner login (accounts app). Django `login()` happens only after password + TOTP.
 LOGIN_URL = "/login"
@@ -118,12 +119,14 @@ SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 
 # Request limiting (services/throttle.py): per rule name, `limit` failures within
-# `window_seconds` block the key for `block_seconds`. A later ticket adds "token".
+# `window_seconds` block the key for `block_seconds`.
 THROTTLE: dict[str, dict[str, int | str]] = {
     # Login failures per IP: 5 in 15 minutes block that address for 15 minutes.
     "login": {"limit": 5, "window_seconds": 15 * 60, "block_seconds": 15 * 60},
     # Dynamic client registration: every request counts, 10 per hour per IP.
     "register": {"limit": 10, "window_seconds": 3600, "block_seconds": 3600},
+    # Token endpoint: every request counts, 60 per minute per IP.
+    "token": {"limit": 60, "window_seconds": 60, "block_seconds": 60},
     # Login failures per account: no lock (anyone knows the username), only a growing delay
     # of 1, 2, 4 ... up to 60 seconds; forgotten after 15 minutes without a failure.
     "login_account": {"mode": "backoff", "max_delay_seconds": 60, "window_seconds": 15 * 60},

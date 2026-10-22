@@ -34,7 +34,7 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 - 타입: `make typecheck` (mypy strict + django-stubs).
 - 전부: `make check` (= `lint typecheck test`).
 - 작업자는 이 「명령」 절을 명령이 바뀌는 티켓에서 함께 고친다.
-- 로컬 실행: `make dev-backend` (Django, :8000).
+- 로컬 실행: `make dev-backend` (Django, :8000). authlib는 http로 온 OAuth 요청(`/authorize`·`/token`)을 막으므로, 로컬에서 http로 시험하려면 `AUTHLIB_INSECURE_TRANSPORT=1`을 켜고 띄운다. 시험에서는 `use_https(client)`, 토큰까지 한 번에 받으려면 `obtain_tokens(client, oauth_client)`·`exchange_code(...)`(`tests/conftest.py`).
 - 시험에서 시각·난수: 서비스는 `adapters.clock.get_clock()`·`adapters.randomness.get_randomness()`로 받고, 시험은 `frozen_clock` 픽스처(`tests/conftest.py`)로 시각을 고정한다(`frozen_clock.advance(초)`).
 - 서명 키: `cd backend && uv run python manage.py signing_keys create|rotate|list` (`create`는 활성 키가 없을 때만, 있으면 종료 코드 1. `rotate`는 새 활성 키를 만들고 이전 키는 10분 동안 JWKS에 남긴다). env `SIGNING_KEY_ENCRYPTION_KEY`(Fernet 키, 만드는 법은 `.env.example`)가 필요하다. 시험에서 활성 키가 필요하면 `signing_key` 픽스처, 난수를 들여다보려면 `recording_randomness` 픽스처.
 - 대표 계정: `cd backend && uv run python manage.py owner create|set-password|reset-totp` (`create --username`은 기본 `farrar142`, 이 이름이 토큰 `sub`. 비밀번호는 `--password` 또는 프롬프트/표준 입력. 계정은 하나뿐이라 두 번째 `create`는 종료 코드 1. `reset-totp`는 장치를 지워 다음 로그인에 TOTP 등록을 강제). 시험에서는 `owner` 픽스처(등록 전 계정), `logged_in_client` 픽스처(비밀번호+TOTP 끝난 클라이언트), `tests.conftest.totp_code(user)`(고정 시계 기준 현재 코드).
