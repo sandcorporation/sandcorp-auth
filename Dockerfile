@@ -15,7 +15,7 @@ WORKDIR /app/backend
 COPY backend/pyproject.toml backend/uv.lock backend/.python-version ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY backend/ ./
-RUN DJANGO_SECRET_KEY=collectstatic-only python manage.py collectstatic --noinput \
+RUN DJANGO_SECRET_KEY=collectstatic-only SIGNING_KEY_ENCRYPTION_KEY=collectstatic-only python manage.py collectstatic --noinput \
  && useradd --uid 1000 --no-create-home app
 USER app
 EXPOSE 8000

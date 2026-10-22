@@ -1,6 +1,7 @@
 """Django settings. Every deploy-specific value comes from the environment (see /.env.example)."""
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -32,6 +33,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "core",
+    "oauth",
 ]
 
 MIDDLEWARE = [
@@ -85,6 +87,15 @@ USE_TZ = True
 
 # The service's absolute base URL; later the JWT `iss`.
 SITE_URL = env("SITE_URL", "https://auth.sandcorp.co.kr").rstrip("/")
+# Fernet key that encrypts signing private keys at rest (see /.env.example for how to make one).
+SIGNING_KEY_ENCRYPTION_KEY = env("SIGNING_KEY_ENCRYPTION_KEY") or (
+    "ZGV2LWluc2VjdXJlLXNpZ25pbmcta2V5LTMyYnl0ZXM=" if DEBUG else ""
+)
+if not SIGNING_KEY_ENCRYPTION_KEY:
+    raise RuntimeError("SIGNING_KEY_ENCRYPTION_KEY is required when DJANGO_DEBUG is not 1")
+# Access token lifetime; a rotated-out signing key stays in the JWKS this long.
+ACCESS_TOKEN_LIFETIME = timedelta(minutes=10)
+
 # Django admin lives on a hard-to-guess path in production.
 ADMIN_PATH = env("DJANGO_ADMIN_PATH", "admin/").strip("/") + "/"
 
