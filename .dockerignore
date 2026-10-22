@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+!.env.example
+**/.venv
+**/__pycache__
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache
+backend/staticfiles
+docs
