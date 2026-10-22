@@ -149,13 +149,64 @@ portfolio(`https://sandcorp.co.kr/.well-known/oauth-protected-resource`):
 
 ## 7. 관리 화면 로그인(기밀 클라이언트)
 
-각 사이트의 관리 화면 로그인은 사이트 자신이 **기밀 클라이언트**로서 Authorization Code 플로우를 돈다. 조율자가 이 서비스의 admin에서 사이트마다 기밀 클라이언트를 등록하고 `client_id`·`client_secret`(한 번만 보인다)·리다이렉트 URI를 사이트 설정에 넣는다.
+각 사이트의 관리 화면 로그인은 사이트 자신이 **기밀 클라이언트**로서 Authorization Code 플로우를 돈다. 조율자가 사이트마다 기밀 클라이언트를 등록하고 `client_id`·`client_secret`·리다이렉트 URI를 사이트 설정에 넣는다. 시크릿은 발급할 때 **한 번만** 보이고 이 서비스에는 해시만 남는다 — 잃어버리면 다시 발급한다(옛 시크릿은 즉시 무효).
 
-1. 사이트 로그인 버튼 → `https://auth.sandcorp.co.kr/authorize?response_type=code&client_id=…&redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256&resource=<자기 리소스 URL>&scope=login`. 기밀 클라이언트도 PKCE(S256)는 필수다. `state`와 `code_verifier`는 사이트 세션에 둔다.
+```sh
+cd backend && uv run python manage.py clients create-confidential --name "뉴스 관리" --redirect-uri https://news.sandcorp.co.kr/auth/callback
+# 재발급: clients rotate-secret --client-id <id>   목록: clients list
+```
+
+admin(클라이언트 → 추가)에서도 만들 수 있다. 추가 폼은 기밀 클라이언트 전용(이름·리다이렉트 URI)이고, 저장 뒤 메시지로 시크릿을 한 번 보여 준다. 변경 화면의 「시크릿 재발급」 버튼도 같다.
+
+### 두 사이트의 값
+
+| 사이트 | 리다이렉트 URI | 토큰 인증 | resource | scope |
+| --- | --- | --- | --- | --- |
+| portfolio | `https://sandcorp.co.kr/<admin 경로>/oauth/callback/` (**끝 슬래시 포함**, 정확한 값은 배포 때 조율자가 등록) | `client_secret_basic` | `https://sandcorp.co.kr/mcp` | `login` |
+| 뉴스 | `https://news.sandcorp.co.kr/auth/callback` (끝 슬래시 없음) | `client_secret_basic` | `https://news.sandcorp.co.kr/mcp` | `login` |
+
+`redirect_uri`는 등록값과 **문자 하나까지 같아야** 한다(인가 요청과 토큰 교환 둘 다). `.../callback/`와 `.../callback`은 다른 값이다. 기밀 클라이언트의 리다이렉트 URI는 https만 등록된다.
+
+### 흐름
+
+1. 사이트 로그인 버튼 → `https://auth.sandcorp.co.kr/authorize?response_type=code&client_id=…&redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256&resource=<자기 리소스 URL>&scope=login`. 기밀 클라이언트도 PKCE(S256)는 필수다(없으면 `error=invalid_request`로 돌아온다). `state`(무작위)와 `code_verifier`(43~128자)는 **사이트의 서버 쪽 세션**에 두고, 콜백에서 한 번 쓰고 지운다. 쿠키나 URL에 `code_verifier`를 싣지 않는다.
 2. 대표가 이 서비스에서 로그인(비밀번호 + TOTP)·동의한다.
-3. 콜백에서 `state`를 확인하고 `POST https://auth.sandcorp.co.kr/token`(form: `grant_type=authorization_code`, `code`, `redirect_uri`, `code_verifier`; 클라이언트 인증 `client_secret_basic`)으로 교환한다.
+3. 콜백에서 `error` 파라미터가 있으면 로그인 실패로 끝낸다. 없으면 `state`가 세션의 값과 같은지 확인하고(다르면 거부) `code`를 토큰으로 교환한다(아래 요청 예).
 4. 받은 `access_token`을 **3절 규칙 그대로**(`aud`=자기 리소스 URL, 요구 스코프 `login`) 검증한다. 통과하면 `sub`는 이미 `AUTH_OWNER_SUB`와 같다(T11).
-5. 사이트의 Django 세션을 만든다(사이트 쪽 대표 계정으로 `login()`). 토큰과 리프레시 토큰은 저장하지 않고 버린다. 이후 관리 화면은 Django 세션으로 돈다.
+5. 사이트의 Django 세션을 만든다(사이트 쪽 대표 계정으로 `login()`). 액세스 토큰은 검증에만 쓰고 저장하지 않는다. 응답의 `refresh_token`은 **버려도 된다**(관리 화면은 이후 Django 세션으로 돈다).
+
+### 토큰 요청
+
+```http
+POST /token HTTP/1.1
+Host: auth.sandcorp.co.kr
+Authorization: Basic base64(client_id:client_secret)
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&code=<코드>&redirect_uri=https%3A%2F%2Fnews.sandcorp.co.kr%2Fauth%2Fcallback&code_verifier=<verifier>
+```
+
+`client_secret_basic`이면 폼에 `client_id`를 넣지 않아도 된다. 대안 `client_secret_post`는 Basic 헤더 대신 폼에 `client_id`와 `client_secret`을 넣는다. 둘 중 하나만 쓴다.
+
+성공(200):
+
+```json
+{"access_token": "eyJ…", "token_type": "Bearer", "expires_in": 600, "refresh_token": "…", "scope": "login"}
+```
+
+필드는 RFC 6749 표준 다섯 개뿐이다. 응답에는 `Cache-Control: no-store`가 붙는다.
+
+실패 본문은 RFC 6749 5.2 형식 `{"error": "…", "error_description": "…"}`이다.
+
+| 경우 | 상태 | `error` |
+| --- | --- | --- |
+| 시크릿이 틀림·없음, 공개 클라이언트가 시크릿을 보냄 | 401 + `WWW-Authenticate: Basic realm="auth.sandcorp.co.kr", error="invalid_client", …` | `invalid_client` |
+| 코드가 틀림·만료·이미 씀, `redirect_uri`가 인가 요청 때와 다름, `code_verifier`가 맞지 않음 | 400 | `invalid_grant` |
+
+### 로그아웃과 세션 만료
+
+- 이 서비스에는 **end-session(로그아웃) 엔드포인트가 없다.** 사이트의 로그아웃은 사이트 자기 Django 세션만 끊는다. 받은 리프레시 토큰을 보관했다면 RFC 7009 `POST /revoke`(같은 클라이언트 인증)로 폐기할 수 있다. 이 서비스의 대표 세션(`/logout`)은 사이트와 따로 산다.
+- 사이트의 관리 화면 세션은 **12시간 이하**로 둔다(`SESSION_COOKIE_AGE`, 브라우저를 닫으면 끝나도록 `SESSION_EXPIRE_AT_BROWSER_CLOSE`도 권한다). 만료되면 위 흐름을 다시 돈다 — 이 서비스의 대표 세션과 동의가 살아 있으면 비밀번호·동의 없이 바로 돌아온다.
 
 이 서비스는 OIDC를 하지 않는다: id_token, userinfo 엔드포인트, `openid` 스코프가 없다. 신원은 4단계의 액세스 토큰 `sub`로만 확인한다.
 

@@ -1,0 +1,12 @@
+{% extends "admin/change_form.html" %}
+{% block object-tools-items %}
+  {% if original and original.kind == "confidential" %}
+    <li>
+      <form method="post" action="{% url 'admin:oauth_client_rotate_secret' original.pk %}">
+        {% csrf_token %}
+        <button type="submit" class="button">시크릿 재발급</button>
+      </form>
+    </li>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}

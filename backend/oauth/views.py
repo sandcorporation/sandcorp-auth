@@ -2,6 +2,7 @@ import json
 from urllib.parse import urlencode, urlsplit
 
 from authlib.oauth2 import OAuth2Error
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -208,6 +209,16 @@ def _authorization_error(request: HttpRequest, error: OAuth2Error) -> HttpRespon
 
 
 def _no_store(response: HttpResponse) -> HttpResponse:
+    _add_basic_realm(response)
     response["Cache-Control"] = "no-store"
     response["Pragma"] = "no-cache"
     return response
+
+
+def _add_basic_realm(response: HttpResponse) -> None:
+    """authlib's 401 `invalid_client` challenge is `Basic error=..., error_description=...`
+    without the `realm` that RFC 7617 makes required; put this service's host in it."""
+    challenge = response.get("WWW-Authenticate", "")
+    if challenge.startswith("Basic ") and "realm=" not in challenge:
+        realm = urlsplit(settings.SITE_URL).hostname or "sandcorp-auth"
+        response["WWW-Authenticate"] = f'Basic realm="{realm}", ' + challenge.removeprefix("Basic ")
