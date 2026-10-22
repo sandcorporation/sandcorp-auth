@@ -63,7 +63,9 @@ def looks_like_cimd_url(client_id: str) -> bool:
 
 
 def _check_url(url: str) -> str:
-    """Validate the URL and its host's addresses (SSRF); return the host name."""
+    """Validate the URL and its host's addresses (SSRF); return the address to connect to.
+    The fetch is pinned to this address so the name is resolved only once (no DNS rebinding
+    between check and connect)."""
     try:
         parts = urlsplit(url)
         port = parts.port
@@ -97,7 +99,7 @@ def _check_url(url: str) -> str:
     for address in addresses:
         if not _public_address(address):
             raise CimdRejected("host resolves to a non-public address")
-    return host
+    return addresses[0]
 
 
 def _public_address(address: str) -> bool:
@@ -118,10 +120,10 @@ def _cache_seconds(headers: Mapping[str, str]) -> int:
 
 
 def _fetch_and_store(url: str, client: Client | None) -> Client:
-    _check_url(url)
+    address = _check_url(url)
     try:
         fetched = get_http_client().fetch_json(
-            url, max_bytes=MAX_DOCUMENT_BYTES, timeout=FETCH_TIMEOUT_SECONDS
+            url, address=address, max_bytes=MAX_DOCUMENT_BYTES, timeout=FETCH_TIMEOUT_SECONDS
         )
     except FetchError as error:
         raise CimdRejected("fetch failed") from error

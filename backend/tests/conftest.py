@@ -118,7 +118,13 @@ class FakeHttp:
     def __init__(self) -> None:
         self.documents: dict[str, FetchedDocument] = {}
         self.addresses: dict[str, list[str]] = {}
+        # Answers for successive `resolve` calls of one host, consumed before `addresses`
+        # (a DNS rebinding: public at check time, private afterwards).
+        self.rebinding: dict[str, list[list[str]]] = {}
+        self.resolved: list[str] = []
         self.fetched: list[str] = []
+        # The address each fetch was pinned to, parallel to `fetched`.
+        self.fetched_addresses: list[str] = []
 
     def put_json(
         self,
@@ -135,10 +141,16 @@ class FakeHttp:
         self.documents[url] = FetchedDocument(200, headers, body)
 
     def resolve(self, host: str) -> list[str]:
+        self.resolved.append(host)
+        if self.rebinding.get(host):
+            return self.rebinding[host].pop(0)
         return self.addresses.get(host, [self.PUBLIC_ADDRESS])
 
-    def fetch_json(self, url: str, *, max_bytes: int, timeout: float) -> FetchedDocument:
+    def fetch_json(
+        self, url: str, *, address: str, max_bytes: int, timeout: float
+    ) -> FetchedDocument:
         self.fetched.append(url)
+        self.fetched_addresses.append(address)
         if url not in self.documents:
             raise FetchError(f"no fake document at {url}")
         document = self.documents[url]
@@ -148,7 +160,8 @@ class FakeHttp:
 @pytest.fixture
 def fake_http() -> Iterator[FakeHttp]:
     """Install a fake HTTP client; `put_json(url, doc)` registers a document, `fetched` records
-    every fetch, `addresses[host] = [...]` overrides name resolution."""
+    every fetch (`fetched_addresses` the address it was pinned to), `addresses[host] = [...]`
+    overrides name resolution, `resolved` records every resolution."""
     fake = FakeHttp()
     previous = set_http_client(fake)
     yield fake

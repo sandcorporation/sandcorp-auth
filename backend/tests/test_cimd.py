@@ -176,3 +176,20 @@ def test_unknown_plain_client_id_is_none(fake_http: FakeHttp) -> None:
     assert server.query_client("no-such-client") is None
     assert fake_http.fetched == []
     assert not AuditEvent.objects.exists()
+
+
+def test_fetch_is_pinned_to_the_checked_public_address(fake_http: FakeHttp) -> None:
+    fake_http.addresses["app.example"] = ["93.184.215.14", "2606:2800:21f:cb07:6820:80da:af6b:8b2c"]
+    fake_http.put_json(CIMD_URL, cimd_document(CIMD_URL))
+    assert server.query_client(CIMD_URL) is not None
+    assert fake_http.fetched_addresses == ["93.184.215.14"]
+
+
+def test_dns_rebinding_after_the_check_does_not_reach_the_private_address(
+    fake_http: FakeHttp,
+) -> None:
+    fake_http.rebinding["app.example"] = [["93.184.215.14"], ["127.0.0.1"]]
+    fake_http.put_json(CIMD_URL, cimd_document(CIMD_URL))
+    assert server.query_client(CIMD_URL) is not None
+    assert fake_http.resolved == ["app.example"]
+    assert fake_http.fetched_addresses == ["93.184.215.14"]
