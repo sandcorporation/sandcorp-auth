@@ -23,6 +23,7 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 - 배포와 서버 설정(env 파일, NPMplus, DNS, OCI)은 조율자가 다룬다. 작업자는 원격 호스트에 쓰지 않는다.
 - 인가 서버 핵심(OAuth 프로토콜 처리)은 authlib다. `backend/oauth/server.py`의 `server`에 엔드포인트·그랜트를 등록하고, 손으로 짜는 것은 authlib에 없는 부분(CIMD, RFC 8707 `resource`, 동의 화면)뿐이다.
 - 스택과 명령은 `~/workspace/portfolio`와 같은 형태를 따른다: `backend/`(uv, Python 3.13, Django, django-ninja), `make test` / `make lint` / `make typecheck` / `make check`.
+- 배포·운영(env 변수, 첫 배포, 관리 명령, 프록시, 백업)은 `docs/operations.md`. 운영 절차가 바뀌는 티켓은 그 문서도 함께 고친다.
 - 두 사이트(portfolio, 뉴스)의 토큰 검증 규칙은 `docs/resource-server-token-validation.md`(참조 구현 `backend/tests/reference_validator.py`).
 
 ## 명령
@@ -39,4 +40,6 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 - 서명 키: `cd backend && uv run python manage.py signing_keys create|rotate|list` (`create`는 활성 키가 없을 때만, 있으면 종료 코드 1. `rotate`는 새 활성 키를 만들고 이전 키는 10분 동안 JWKS에 남긴다). env `SIGNING_KEY_ENCRYPTION_KEY`(Fernet 키, 만드는 법은 `.env.example`)가 필요하다. 시험에서 활성 키가 필요하면 `signing_key` 픽스처, 난수를 들여다보려면 `recording_randomness` 픽스처.
 - 대표 계정: `cd backend && uv run python manage.py owner create|set-password|reset-totp` (`create --username`은 기본 `farrar142`, 이 이름이 토큰 `sub`. 비밀번호는 `--password` 또는 프롬프트/표준 입력. 계정은 하나뿐이라 두 번째 `create`는 종료 코드 1. `reset-totp`는 장치를 지워 다음 로그인에 TOTP 등록을 강제). 시험에서는 `owner` 픽스처(등록 전 계정), `logged_in_client` 픽스처(비밀번호+TOTP 끝난 클라이언트), `tests.conftest.totp_code(user)`(고정 시계 기준 현재 코드).
 - 기밀 클라이언트(사이트 관리 화면 로그인): `cd backend && uv run python manage.py clients create-confidential --name <이름> --redirect-uri <https URI> [--redirect-uri …]` → `client_id`·`client_secret`을 한 번만 출력(DB엔 해시). `clients rotate-secret --client-id <id>`(옛 시크릿 즉시 무효), `clients list`. admin 「클라이언트 추가」도 기밀 전용이다. 시험에서는 `portfolio_site_client`·`news_site_client` 픽스처(`tests/test_confidential_clients.py`, `(client, secret)`).
-- 운영 compose 로컬 확인: `.env.example`을 `.env`로 복사해 값을 채우고(`DJANGO_ALLOWED_HOSTS`에 `localhost`) `COMPOSE_PROJECT_NAME=sandcorp-auth-local COMPOSE_FILE=docker-compose.prod.yml bash deploy/deploy.sh` → http://127.0.0.1:18093 . 끝나면 `make prod-local-down`.
+- 운영 compose 로컬 확인: `.env.example`을 `.env`로 복사해 값을 채우고(`DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1`, `SITE_URL`·`DJANGO_CSRF_TRUSTED_ORIGINS`=`http://127.0.0.1:18093`, `TRUST_X_FORWARDED_FOR=0`, OAuth 흐름까지 보려면 `AUTHLIB_INSECURE_TRANSPORT=1` — 로컬만) `make prod-local` → http://127.0.0.1:18093 . 관리 명령은 `docker compose -p sandcorp-auth-local -f docker-compose.prod.yml exec web python manage.py …`. 끝나면 `make prod-local-down`(볼륨 포함)과 `rm .env`. 자세한 것은 `docs/operations.md` 8절.
+- 운영 서버의 관리 명령: `docker exec -it sandcorp-auth-web-1 python manage.py …`(`docs/operations.md` 0·3절).
+- 운영 보안 설정(HSTS 1년·서브도메인 없음, `SECURE_SSL_REDIRECT` 끔, `X_FRAME_OPTIONS=DENY`, Referrer `same-origin`, 쿠키 Secure·Lax)은 `config/settings.py`. `check --deploy`에 남는 W005·W008·W021은 의도한 것이다(`docs/operations.md` 4절).

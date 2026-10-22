@@ -421,3 +421,35 @@ def test_public_client_sending_a_secret_is_invalid_client(
 @pytest.mark.parametrize("path", ["/end-session", "/oauth/logout", "/connect/endsession"])
 def test_there_is_no_end_session_endpoint(client: Client, path: str) -> None:
     assert client.get(path).status_code == 404
+
+
+def test_admin_change_form_checks_redirect_uris(
+    owner_client: Client, portfolio_site_client: ConfidentialClient
+) -> None:
+    site, _ = portfolio_site_client
+    change = f"{ADMIN_CLIENTS}{site.pk}/change/"
+
+    def post(uris: str) -> str:
+        return owner_client.post(
+            change, {"name": site.name, "redirect_uris": uris, "active": "on"}
+        ).content.decode()
+
+    # Confidential: https only, even for localhost.
+    assert "https여야" in post('["http://localhost:8000/cb"]')
+    assert "https여야" in post('["https://sandcorp.co.kr/cb#x"]')
+    site.refresh_from_db()
+    assert site.redirect_uris == [PORTFOLIO_CALLBACK]
+
+    owner_client.post(
+        change, {"name": site.name, "redirect_uris": '["https://sandcorp.co.kr/new/"]'}
+    )
+    site.refresh_from_db()
+    assert site.redirect_uris == ["https://sandcorp.co.kr/new/"]
+
+    # Public: the shared rule (https, or http on loopback).
+    site.kind = OAuthClient.Kind.PUBLIC
+    site.save()
+    assert "리다이렉트 URI" in post('["http://evil.example/cb"]')
+    owner_client.post(change, {"name": site.name, "redirect_uris": '["http://127.0.0.1:9/cb"]'})
+    site.refresh_from_db()
+    assert site.redirect_uris == ["http://127.0.0.1:9/cb"]

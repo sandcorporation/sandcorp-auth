@@ -37,3 +37,19 @@ def test_health_reports_unavailable_when_database_is_down(
         "db": "unavailable",
         "time": "2026-01-01T00:00:00Z",
     }
+
+
+@pytest.mark.django_db
+def test_production_security_headers(client: Client, frozen_clock: FrozenClock) -> None:
+    # Plain http (the in-container health check) is served, not redirected: NPMplus owns TLS.
+    plain = client.get("/api/health")
+    assert plain.status_code == 200
+    assert "Strict-Transport-Security" not in plain.headers
+
+    behind_proxy = client.get("/api/health", headers={"X-Forwarded-Proto": "https"})
+
+    assert behind_proxy.status_code == 200
+    assert behind_proxy.headers["Strict-Transport-Security"] == "max-age=31536000"
+    assert behind_proxy.headers["X-Frame-Options"] == "DENY"
+    assert behind_proxy.headers["Referrer-Policy"] == "same-origin"
+    assert behind_proxy.headers["X-Content-Type-Options"] == "nosniff"

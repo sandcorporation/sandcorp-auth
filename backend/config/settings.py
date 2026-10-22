@@ -117,6 +117,19 @@ SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SAMESITE = "Lax"
+
+# Security headers (production = DJANGO_DEBUG not 1). NPMplus terminates TLS and redirects
+# http -> https, so SECURE_SSL_REDIRECT stays off: the compose/deploy health checks call
+# http://127.0.0.1:8000/api/health inside the container and would get a 301 otherwise.
+# HSTS covers auth.sandcorp.co.kr only (no subdomains, no preload list).
+SECURE_SSL_REDIRECT = False
+SECURE_HSTS_SECONDS = 0 if DEBUG else 31536000
+SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+SECURE_HSTS_PRELOAD = False
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
 
 # Request limiting (services/throttle.py): per rule name, `limit` failures within
 # `window_seconds` block the key for `block_seconds`.
