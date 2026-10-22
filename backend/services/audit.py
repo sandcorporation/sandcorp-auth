@@ -16,6 +16,7 @@ type JSON = str | int | float | bool | None | list[JSON] | dict[str, JSON]
 LOGIN_PASSWORD_FAILED: Final = "login.password_failed"
 LOGIN_TOTP_FAILED: Final = "login.totp_failed"
 LOGIN_LOCKED: Final = "login.locked"
+LOGIN_DELAYED: Final = "login.delayed"
 LOGIN_SUCCEEDED: Final = "login.succeeded"
 LOGIN_TOTP_ENROLLED: Final = "login.totp_enrolled"
 LOGOUT: Final = "logout"

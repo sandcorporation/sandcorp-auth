@@ -2,9 +2,11 @@ from django.db import models
 
 
 class ThrottleCounter(models.Model):
-    """Failures counted for one key (e.g. `login:user:farrar142`) in the current window.
+    """Failures counted for one key (e.g. `login:ip:10.0.0.1`) in the current window.
 
-    A row whose window and block have both passed is simply reused by the next hit.
+    A row whose window and block have both passed is simply reused by the next hit. For a
+    backoff rule (`login_account:user:farrar142`) `count` is the run of consecutive failures,
+    `window_started_at` the last one and `blocked_until` the next allowed moment.
     """
 
     key = models.CharField(max_length=255, unique=True)

@@ -29,8 +29,8 @@ BACKEND = "django.contrib.auth.backends.ModelBackend"
 
 
 def _locked_message(seconds: int) -> str:
-    minutes = max(1, math.ceil(seconds / 60))
-    return f"로그인 시도가 너무 많습니다. 잠시 뒤 다시 시도하세요(약 {minutes}분)."
+    when = f"{seconds}초" if seconds < 120 else f"약 {math.ceil(seconds / 60)}분"
+    return f"로그인 시도가 너무 많습니다. {when} 뒤 다시 시도하세요."
 
 
 def _finish(request: HttpRequest, user: User, *, enrolled_now: bool = False) -> HttpResponse:
