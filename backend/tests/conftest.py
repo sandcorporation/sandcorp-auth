@@ -282,3 +282,18 @@ def obtain_tokens(
     assert response.status_code == 200, response.content
     tokens: dict[str, str | int] = response.json()
     return tokens
+
+
+def refresh(
+    client: Client, oauth_client: OAuthClient, refresh_token: str, /, **overrides: str | None
+) -> "TestResponse":
+    """POST /token with `grant_type=refresh_token` for `oauth_client` (a public client:
+    `client_id` in the form). An override of None drops that field."""
+    use_https(client)
+    form: dict[str, str | None] = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": oauth_client.client_id,
+    }
+    form.update(overrides)
+    return client.post("/token", {key: value for key, value in form.items() if value is not None})

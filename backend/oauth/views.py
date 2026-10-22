@@ -13,8 +13,9 @@ from adapters.clock import get_clock
 from core.http import client_ip
 from oauth.grants import SandcorpAuthorizationCodeGrant, live_consent
 from oauth.models import Client, Consent
-from oauth.server import authorization_server_metadata, server
+from oauth.server import SandcorpRevocationEndpoint, authorization_server_metadata, server
 from services import audit, throttle
+from services.consents import revoke_consent
 from services.signing import published_jwks
 
 
@@ -54,8 +55,31 @@ def register(request: HttpRequest) -> HttpResponse:
 @csrf_exempt
 @require_POST
 def token(request: HttpRequest) -> HttpResponse:
-    """The token endpoint (RFC 6749 3.2): authlib runs the grant (`authorization_code` here).
-    Every request counts toward the per-IP limit. Neither tokens nor errors may be cached."""
+    """The token endpoint (RFC 6749 3.2): authlib runs the grant (`authorization_code`,
+    `refresh_token`). Every request counts toward the per-IP limit. Neither tokens nor errors
+    may be cached."""
+    limited = _token_limit(request)
+    if limited is not None:
+        return limited
+    response: HttpResponse = server.create_token_response(request)
+    return _no_store(response)
+
+
+@csrf_exempt
+@require_POST
+def revoke(request: HttpRequest) -> HttpResponse:
+    """Token revocation (RFC 7009), limited together with the token endpoint per IP."""
+    limited = _token_limit(request)
+    if limited is not None:
+        return limited
+    response: HttpResponse = server.create_endpoint_response(
+        SandcorpRevocationEndpoint.ENDPOINT_NAME, request
+    )
+    return _no_store(response)
+
+
+def _token_limit(request: HttpRequest) -> HttpResponse | None:
+    """Count the request toward the per-IP `token` limit; the 429 response if it is over."""
     ip = client_ip(request)
     blocked = throttle.check("token", f"ip:{ip}")
     if not blocked.allowed:
@@ -63,8 +87,7 @@ def token(request: HttpRequest) -> HttpResponse:
         limited["Retry-After"] = str(blocked.retry_after)
         return _no_store(limited)
     throttle.hit("token", f"ip:{ip}")
-    response: HttpResponse = server.create_token_response(request)
-    return _no_store(response)
+    return None
 
 
 @require_http_methods(["GET", "POST"])
@@ -101,7 +124,7 @@ def authorize(request: HttpRequest) -> HttpResponse:
         )
         return _no_store(server.create_authorization_response(request, grant=grant))
     if consent is None or not consent.covers(grant.scopes):
-        _grant_consent(user, grant, consent)
+        _grant_consent(user, grant, consent, ip)
         audit.record(
             audit.CONSENT_GRANTED,
             actor=user.username,
@@ -113,16 +136,17 @@ def authorize(request: HttpRequest) -> HttpResponse:
 
 
 def _grant_consent(
-    user: User, grant: SandcorpAuthorizationCodeGrant, previous: Consent | None
+    user: User, grant: SandcorpAuthorizationCodeGrant, previous: Consent | None, ip: str
 ) -> Consent:
-    """Replace `previous` (if any) with a live consent for its scopes plus the requested ones."""
+    """Replace `previous` (if any) with a live consent for its scopes plus the requested ones.
+    `previous` is revoked like any consent, refresh token families included: the client is
+    getting a code under the new consent right now, so it loses nothing it cannot replace."""
     now = get_clock().now()
     scopes = set(grant.scopes)
     with transaction.atomic():
         if previous is not None:
             scopes |= set(previous.scopes)
-            previous.revoked_at = now
-            previous.save(update_fields=["revoked_at"])
+            revoke_consent(previous, reason="consent_replaced", actor=user.username, ip=ip)
         return Consent.objects.create(
             user=user,
             client=grant.request.client,

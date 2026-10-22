@@ -9,21 +9,32 @@ them, and are good once for `AUTHORIZATION_CODE_LIFETIME`.
 At the token endpoint the code is claimed atomically (`used_at`), a `resource` sent there must
 equal the code's, and the access token's `aud` is the code's resource. A used code that comes
 back revokes the refresh token family its consent opened (`oauth.tokens.report_code_reuse`).
+
+`SandcorpRefreshTokenGrant` rotates refresh tokens: every refresh returns a new refresh token in
+the same family and marks the old one `replaced_by` it. A replaced or revoked refresh token that
+comes back is reuse: the whole family is revoked. The family's resource is the only possible
+`aud`, and a narrower `scope` may be asked for, never a wider one.
 """
 
 import hashlib
 
 from authlib.oauth2 import OAuth2Error, OAuth2Request
 from authlib.oauth2.rfc6749 import InvalidGrantError, InvalidRequestError, InvalidScopeError
-from authlib.oauth2.rfc6749.grants import AuthorizationCodeGrant
+from authlib.oauth2.rfc6749.grants import AuthorizationCodeGrant, RefreshTokenGrant
 from authlib.oauth2.rfc7636 import CodeChallenge
 from django.contrib.auth.models import User
 from django.db import transaction
 
 from adapters.clock import get_clock
 from core.http import client_ip
-from oauth.models import AuthorizationCode, Client, Consent, Resource
-from oauth.tokens import TokenResponse, report_code_reuse
+from oauth.models import AuthorizationCode, Client, Consent, RefreshToken, Resource
+from oauth.tokens import (
+    TokenResponse,
+    find_refresh_token,
+    report_code_reuse,
+    revoke_family,
+)
+from services import audit
 from services.signing import random_token
 
 type Headers = list[tuple[str, str]]
@@ -206,3 +217,93 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
     def authenticate_user(self, authorization_code: AuthorizationCode) -> User:
         user: User = authorization_code.user
         return user
+
+
+class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no stubs
+    TOKEN_ENDPOINT_AUTH_METHODS = ["none", "client_secret_basic", "client_secret_post"]
+    INCLUDE_NEW_REFRESH_TOKEN = True
+
+    # Set by save_token: the refresh token that replaces the one presented.
+    issued: RefreshToken | None = None
+
+    def validate_token_request(self) -> None:
+        # authlib's order, except that request.client is known before the refresh token is
+        # looked up: another client's token is refused without touching its family.
+        client: Client = self._validate_request_client()
+        self.request.client = client
+        token: RefreshToken = self._validate_request_token(client)
+        self._validate_token_scope(token)  # narrower is fine, wider is invalid_scope
+        self.request.refresh_token = token
+        # RFC 8707 2.2: the family is bound to one resource; a `resource` sent must be it.
+        values: list[str] = self.request.payload.datalist.get("resource", [])
+        if values and values != [token.family.resource.url]:
+            raise InvalidTargetError("'resource' is not the resource of the refresh token.")
+
+    def authenticate_refresh_token(self, refresh_token: str) -> RefreshToken | None:
+        client: Client = self.request.client
+        found = find_refresh_token(refresh_token)
+        if found is None or not found.check_client(client):
+            return None
+        if found.replaced_by_id is not None or found.revoked_at is not None:
+            # Reuse: someone holds a token that was already spent. Trust nobody in the family.
+            family = found.family
+            revoke_family(family, "refresh_reuse")
+            audit.record(
+                audit.TOKEN_REUSE_DETECTED,
+                actor=family.user.get_username(),
+                client_id=client.client_id,
+                ip=request_ip(self.request),
+                detail={"resource": family.resource.url, "family": family.pk},
+            )
+            return None
+        if found.family.revoked_at is not None or found.is_expired():
+            return None
+        return found
+
+    def create_token_response(self) -> tuple[int, TokenResponse, Headers]:
+        token: RefreshToken = self.request.refresh_token
+        # Lock the presented token and check it is still unspent, so two concurrent refreshes
+        # with the same token cannot both rotate it. The loser gets invalid_grant (not reuse:
+        # its token was valid when it was sent).
+        with transaction.atomic():
+            unspent = (
+                RefreshToken.objects.select_for_update()
+                .filter(pk=token.pk, replaced_by__isnull=True, revoked_at__isnull=True)
+                .exists()
+            )
+            if unspent:
+                response: tuple[int, TokenResponse, Headers] = super().create_token_response()
+                return response
+        raise InvalidGrantError("Invalid 'refresh_token' in request.")
+
+    def generate_token(
+        self,
+        user: User | None = None,
+        scope: str | None = None,
+        grant_type: str | None = None,
+        expires_in: int | None = None,
+        include_refresh_token: bool = True,
+    ) -> TokenResponse:
+        token: RefreshToken = self.request.refresh_token
+        generated: TokenResponse = self.server.generate_token(
+            grant_type=grant_type or self.GRANT_TYPE,
+            client=self.request.client,
+            user=user,
+            scope=scope,
+            expires_in=expires_in,
+            include_refresh_token=include_refresh_token,
+            resource=token.family.resource,  # the access token's `aud`, always the family's
+        )
+        return generated
+
+    def save_token(self, token: TokenResponse) -> None:
+        self.issued = self.server.save_token(token, self.request)
+
+    def authenticate_user(self, refresh_token: RefreshToken) -> User:
+        user: User = refresh_token.family.user
+        return user
+
+    def revoke_old_credential(self, refresh_token: RefreshToken) -> None:
+        if self.issued is None:
+            raise RuntimeError("a rotated refresh token needs its replacement")
+        RefreshToken.objects.filter(pk=refresh_token.pk).update(replaced_by=self.issued)

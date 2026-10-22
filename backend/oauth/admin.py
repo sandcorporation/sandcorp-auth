@@ -4,6 +4,7 @@ from django.contrib import admin
 from django.db.models import QuerySet
 from django.http import HttpRequest
 
+from core.http import client_ip
 from oauth.models import (
     AuthorizationCode,
     Client,
@@ -13,6 +14,9 @@ from oauth.models import (
     Resource,
     Scope,
 )
+from oauth.tokens import revoke_family
+from services import audit
+from services.consents import revoke_consent
 
 if TYPE_CHECKING:
     _ResourceAdmin = admin.ModelAdmin[Resource]
@@ -96,13 +100,24 @@ class ReadOnlyAdminMixin:
 @admin.register(Consent)
 class ConsentAdmin(ReadOnlyAdminMixin, _ConsentAdmin):
     """What the owner allowed: when, which client, which resource and scopes. Revoking a
-    consent (with its refresh token family) comes with the revocation ticket."""
+    consent cuts its refresh token families; the next /authorize asks the owner again."""
 
     list_display = ["client", "resource", "scope_list", "granted_at", "revoked_at", "is_live"]
     list_filter = ["resource", ("revoked_at", admin.EmptyFieldListFilter)]
     search_fields = ["client__name", "client__client_id"]
     ordering = ["-granted_at"]
     list_select_related = ["client", "resource"]
+    actions = ["revoke"]
+
+    @admin.action(description="선택한 동의 폐기(리프레시 토큰 패밀리도 폐기)")
+    def revoke(self, request: HttpRequest, queryset: QuerySet[Consent]) -> None:
+        actor = request.user.get_username()
+        ip = client_ip(request)
+        count = sum(
+            revoke_consent(consent, reason="consent_revoked", actor=actor, ip=ip)
+            for consent in queryset.filter(revoked_at__isnull=True)
+        )
+        self.message_user(request, f"동의 {count}개를 폐기했습니다.")
 
     @admin.display(description="스코프")
     def scope_list(self, obj: Consent) -> str:
@@ -126,13 +141,37 @@ class AuthorizationCodeAdmin(ReadOnlyAdminMixin, _AuthorizationCodeAdmin):
 
 @admin.register(RefreshTokenFamily)
 class RefreshTokenFamilyAdmin(ReadOnlyAdminMixin, _RefreshTokenFamilyAdmin):
-    """Refresh token families, one live per consent. Revoking one comes with #10."""
+    """Refresh token families, one live per consent. Revoking one cuts all its tokens; the
+    consent stays, so the client can get a new family with a new authorization code."""
 
     list_display = ["client", "resource", "created_at", "revoked_at", "revoked_reason"]
     list_filter = ["resource", ("revoked_at", admin.EmptyFieldListFilter)]
     search_fields = ["client__name", "client__client_id"]
     ordering = ["-created_at"]
     list_select_related = ["client", "resource"]
+    actions = ["revoke"]
+
+    @admin.action(description="선택한 패밀리 폐기")
+    def revoke(self, request: HttpRequest, queryset: QuerySet[RefreshTokenFamily]) -> None:
+        actor = request.user.get_username()
+        ip = client_ip(request)
+        families = list(
+            queryset.filter(revoked_at__isnull=True).select_related("client", "resource")
+        )
+        for family in families:
+            revoke_family(family, "revoked_by_admin")
+            audit.record(
+                audit.TOKEN_REVOKED,
+                actor=actor,
+                client_id=family.client.client_id,
+                ip=ip,
+                detail={
+                    "resource": family.resource.url,
+                    "family": family.pk,
+                    "reason": "revoked_by_admin",
+                },
+            )
+        self.message_user(request, f"패밀리 {len(families)}개를 폐기했습니다.")
 
 
 @admin.register(RefreshToken)
