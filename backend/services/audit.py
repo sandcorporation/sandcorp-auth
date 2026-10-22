@@ -27,6 +27,10 @@ CONSENT_DENIED: Final = "consent.denied"
 AUTHORIZATION_CODE_ISSUED: Final = "authorization_code.issued"
 TOKEN_ISSUED: Final = "token.issued"
 TOKEN_CODE_REUSE_DETECTED: Final = "token.code_reuse_detected"
+TOKEN_REFRESHED: Final = "token.refreshed"
+TOKEN_REUSE_DETECTED: Final = "token.reuse_detected"
+TOKEN_REVOKED: Final = "token.revoked"
+CONSENT_REVOKED: Final = "consent.revoked"
 
 SECRET_KEYS: Final = frozenset({"password", "code", "token", "secret", "otp"})
 

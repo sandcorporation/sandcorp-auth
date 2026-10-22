@@ -44,6 +44,15 @@ def hash_refresh_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def find_refresh_token(raw: str) -> RefreshToken | None:
+    """The stored refresh token with this value (live or not), or None."""
+    return (
+        RefreshToken.objects.select_related("family__client", "family__user", "family__resource")
+        .filter(token_hash=hash_refresh_token(raw))
+        .first()
+    )
+
+
 def access_token_jti(access_token: str) -> str:
     """The `jti` of an access token this server just signed (not verified: it is ours)."""
     claims: dict[str, object] = jwt.decode(access_token, options={"verify_signature": False})

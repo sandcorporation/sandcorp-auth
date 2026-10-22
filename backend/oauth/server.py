@@ -5,14 +5,15 @@
 client registration endpoint (RFC 7591) and the authorization code grant with required PKCE
 S256 and RFC 8707 `resource` (`oauth.grants`), whose tokens come from `oauth.tokens` (JWT
 access token with `aud` = the code's resource; refresh token stored as a hash in the consent's
-family by `save_token`). The refresh token grant and the revocation
-endpoint are registered by later tickets with `server.register_grant(...)` /
-`server.register_endpoint(...)` at the bottom of this module.
+family by `save_token`), the refresh token grant that rotates them, and the revocation
+endpoint (RFC 7009) that revokes a refresh token's whole family. Later grants and endpoints are
+registered with `server.register_grant(...)` / `server.register_endpoint(...)` at the bottom of
+this module.
 """
 
 from typing import Final
 
-from authlib.integrations.django_oauth2 import AuthorizationServer
+from authlib.integrations.django_oauth2 import AuthorizationServer, RevocationEndpoint
 from authlib.oauth2 import OAuth2Request
 from authlib.oauth2.rfc6749 import InvalidRequestError, JsonRequest
 from authlib.oauth2.rfc7591 import (
@@ -25,13 +26,20 @@ from django.conf import settings
 from django.contrib.auth.base_user import AbstractBaseUser
 
 from adapters.clock import get_clock
-from oauth.grants import S256CodeChallenge, SandcorpAuthorizationCodeGrant, request_ip
-from oauth.models import AuthorizationCode, Client, Resource, Scope
+from oauth.grants import (
+    S256CodeChallenge,
+    SandcorpAuthorizationCodeGrant,
+    SandcorpRefreshTokenGrant,
+    request_ip,
+)
+from oauth.models import AuthorizationCode, Client, RefreshToken, Resource, Scope
 from oauth.tokens import (
     SandcorpTokenGenerator,
     TokenResponse,
     access_token_jti,
+    find_refresh_token,
     live_family,
+    revoke_family,
     store_refresh_token,
 )
 from services import audit
@@ -107,26 +115,67 @@ class SandcorpAuthorizationServer(AuthorizationServer):  # type: ignore[misc]  #
             resource=resource,
         )
 
-    def save_token(self, token: TokenResponse, request: OAuth2Request) -> None:
-        """Access tokens are self-contained JWTs and are not stored. The refresh token goes
-        (as a hash) into the live family of the consent behind the authorization code."""
-        code: AuthorizationCode = request.authorization_code
-        family = live_family(code.consent)
+    def save_token(self, token: TokenResponse, request: OAuth2Request) -> RefreshToken | None:
+        """Access tokens are self-contained JWTs and are not stored. The refresh token goes (as
+        a hash) into a family: on a code exchange the live family of the code's consent, on a
+        refresh the presented token's family, with the presented token's scope (RFC 6749 6:
+        a new refresh token has exactly the scope of the one it replaces). Returns it."""
+        presented: RefreshToken | None = request.refresh_token
+        if presented is not None:
+            family = presented.family
+            kind = audit.TOKEN_REFRESHED
+            refresh_scope = presented.scope
+        else:
+            code: AuthorizationCode = request.authorization_code
+            family = live_family(code.consent)
+            kind = audit.TOKEN_ISSUED
+            refresh_scope = token["scope"]
         jti = access_token_jti(token["access_token"])
+        stored = None
         if "refresh_token" in token:
-            store_refresh_token(family, token["refresh_token"], token["scope"], jti)
+            stored = store_refresh_token(family, token["refresh_token"], refresh_scope, jti)
         client: Client = request.client
         audit.record(
-            audit.TOKEN_ISSUED,
-            actor=code.user.get_username(),
+            kind,
+            actor=family.user.get_username(),
             client_id=client.client_id,
             ip=request_ip(request),
             detail={
                 "client_id": client.client_id,
-                "resource": code.resource.url,
+                "resource": family.resource.url,
                 "scope": token["scope"],
                 "jti": jti,
                 "family": family.pk,
+            },
+        )
+        return stored
+
+
+class SandcorpRevocationEndpoint(RevocationEndpoint):  # type: ignore[misc]  # no stubs
+    """RFC 7009. A refresh token revokes its whole family. Access tokens are short-lived JWTs
+    with no deny list: revoking one is accepted (200) and does nothing; cutting the refresh
+    token is what stops a client. Unknown tokens get 200 too. Another client's refresh token is
+    refused by authlib with `invalid_grant` (RFC 7009 2.1) and is left alone."""
+
+    CLIENT_AUTH_METHODS = list(CLIENT_AUTH_METHODS)
+
+    def query_token(self, token_string: str, token_type_hint: str | None) -> RefreshToken | None:
+        # The hint is ignored: RFC 7009 2.1 says to search every type when it does not match,
+        # and refresh tokens are the only kind stored.
+        return find_refresh_token(token_string)
+
+    def revoke_token(self, token: RefreshToken, request: OAuth2Request) -> None:
+        family = token.family
+        revoke_family(family, "revoked_by_client")
+        audit.record(
+            audit.TOKEN_REVOKED,
+            actor=family.user.get_username(),
+            client_id=family.client.client_id,
+            ip=request_ip(request),
+            detail={
+                "resource": family.resource.url,
+                "family": family.pk,
+                "reason": "revoked_by_client",
             },
         )
 
@@ -194,3 +243,5 @@ class DynamicClientRegistration(ClientRegistrationEndpoint):  # type: ignore[mis
 server = SandcorpAuthorizationServer(Client, None)  # no token model: see save_token
 server.register_endpoint(DynamicClientRegistration)
 server.register_grant(SandcorpAuthorizationCodeGrant, [S256CodeChallenge(required=True)])
+server.register_grant(SandcorpRefreshTokenGrant)
+server.register_endpoint(SandcorpRevocationEndpoint)
