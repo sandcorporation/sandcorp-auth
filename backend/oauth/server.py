@@ -2,8 +2,9 @@
 
 `server` is the `AuthorizationServer` every OAuth view uses. Clients come from
 `services.clients.find_client` (stored clients, then CIMD). Registered here now: the dynamic
-client registration endpoint (RFC 7591). Grants (authorization code + PKCE, refresh token) and
-the revocation endpoint are registered by later tickets with `server.register_grant(...)` /
+client registration endpoint (RFC 7591) and the authorization code grant with required PKCE
+S256 and RFC 8707 `resource` (`oauth.grants`). The refresh token grant and the revocation
+endpoint are registered by later tickets with `server.register_grant(...)` /
 `server.register_endpoint(...)` at the bottom of this module.
 """
 
@@ -20,6 +21,7 @@ from authlib.oauth2.rfc8414 import AuthorizationServerMetadata
 from django.conf import settings
 
 from adapters.clock import get_clock
+from oauth.grants import S256CodeChallenge, SandcorpAuthorizationCodeGrant
 from oauth.models import Client, Scope
 from services.clients import find_client
 from services.redirect_uris import ALLOWED_GRANT_TYPES, valid_redirect_uri
@@ -127,3 +129,4 @@ class DynamicClientRegistration(ClientRegistrationEndpoint):  # type: ignore[mis
 
 server = SandcorpAuthorizationServer(Client, None)  # token model: save_token is #9's
 server.register_endpoint(DynamicClientRegistration)
+server.register_grant(SandcorpAuthorizationCodeGrant, [S256CodeChallenge(required=True)])

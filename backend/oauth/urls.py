@@ -1,8 +1,9 @@
-"""OAuth endpoints outside /api/: well-known documents and client registration."""
+"""OAuth endpoints outside /api/: well-known documents, client registration, authorization."""
 
 from django.urls import path
 
 from oauth import views
+from oauth.server import AUTHORIZE_PATH, REGISTER_PATH
 
 urlpatterns = [
     path(".well-known/jwks.json", views.jwks, name="jwks"),
@@ -11,5 +12,6 @@ urlpatterns = [
         views.authorization_server_metadata_view,
         name="oauth-authorization-server",
     ),
-    path("register", views.register, name="register"),
+    path(REGISTER_PATH.lstrip("/"), views.register, name="register"),
+    path(AUTHORIZE_PATH.lstrip("/"), views.authorize, name="authorize"),
 ]

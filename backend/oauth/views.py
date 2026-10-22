@@ -1,10 +1,18 @@
 import json
+from urllib.parse import urlencode, urlsplit
 
+from authlib.oauth2 import OAuth2Error
+from django.contrib.auth.models import User
+from django.db import transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.shortcuts import redirect, render
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
+from adapters.clock import get_clock
 from core.http import client_ip
+from oauth.grants import SandcorpAuthorizationCodeGrant, live_consent
+from oauth.models import Client, Consent
 from oauth.server import authorization_server_metadata, server
 from services import audit, throttle
 from services.signing import published_jwks
@@ -39,5 +47,126 @@ def register(request: HttpRequest) -> HttpResponse:
     if response.status_code == 201:
         client_id = str(json.loads(response.content)["client_id"])
         audit.record(audit.CLIENT_REGISTERED, client_id=client_id, ip=ip, detail={"via": "dcr"})
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@require_http_methods(["GET", "POST"])
+def authorize(request: HttpRequest) -> HttpResponse:
+    """The authorization endpoint (RFC 6749 4.1 with PKCE S256 and RFC 8707 `resource`).
+
+    GET validates the request and either issues a code at once (a live consent already covers
+    the scopes) or shows the consent screen. POST is the owner's answer from that screen
+    (`decision=allow|deny`), validated again from the same query string.
+    """
+    user = request.user
+    if not isinstance(user, User) or not user.is_authenticated:
+        return redirect("/login?" + urlencode({"next": request.get_full_path()}))
+    try:
+        grant: SandcorpAuthorizationCodeGrant = server.get_consent_grant(request, end_user=user)
+    except OAuth2Error as error:
+        return _authorization_error(request, error)
+    client: Client = grant.request.client
+    consent = live_consent(user, client, grant.resource)
+    ip = client_ip(request)
+    if request.method == "GET":
+        if consent is not None and consent.covers(grant.scopes):
+            return _issue_code(request, grant, user, ip)
+        return _consent_screen(request, grant, consent)
+
+    detail = {"resource": grant.resource.url, "scope": " ".join(grant.scopes)}
+    if request.POST.get("decision") != "allow":
+        audit.record(
+            audit.CONSENT_DENIED,
+            actor=user.username,
+            client_id=client.client_id,
+            ip=ip,
+            detail=detail,
+        )
+        return _no_store(server.create_authorization_response(request, grant=grant))
+    if consent is None or not consent.covers(grant.scopes):
+        _grant_consent(user, grant, consent)
+        audit.record(
+            audit.CONSENT_GRANTED,
+            actor=user.username,
+            client_id=client.client_id,
+            ip=ip,
+            detail=detail,
+        )
+    return _issue_code(request, grant, user, ip)
+
+
+def _grant_consent(
+    user: User, grant: SandcorpAuthorizationCodeGrant, previous: Consent | None
+) -> Consent:
+    """Replace `previous` (if any) with a live consent for its scopes plus the requested ones."""
+    now = get_clock().now()
+    scopes = set(grant.scopes)
+    with transaction.atomic():
+        if previous is not None:
+            scopes |= set(previous.scopes)
+            previous.revoked_at = now
+            previous.save(update_fields=["revoked_at"])
+        return Consent.objects.create(
+            user=user,
+            client=grant.request.client,
+            resource=grant.resource,
+            scopes=sorted(scopes),
+            granted_at=now,
+        )
+
+
+def _issue_code(
+    request: HttpRequest, grant: SandcorpAuthorizationCodeGrant, user: User, ip: str
+) -> HttpResponse:
+    response: HttpResponse = server.create_authorization_response(
+        request, grant_user=user, grant=grant
+    )
+    issued = grant.issued
+    if issued is not None:
+        audit.record(
+            audit.AUTHORIZATION_CODE_ISSUED,
+            actor=user.username,
+            client_id=issued.client.client_id,
+            ip=ip,
+            detail={"resource": issued.resource.url, "scope": issued.scope},
+        )
+    return _no_store(response)
+
+
+def _consent_screen(
+    request: HttpRequest, grant: SandcorpAuthorizationCodeGrant, consent: Consent | None
+) -> HttpResponse:
+    client: Client = grant.request.client
+    granted = set(consent.scopes) if consent is not None else set()
+    descriptions = dict(
+        grant.resource.scopes.filter(name__in=grant.scopes).values_list("name", "description")
+    )
+    scopes = [
+        {"name": name, "description": descriptions[name], "granted": name in granted}
+        for name in grant.scopes
+    ]
+    context = {
+        "client_name": client.name,
+        "client_id": client.client_id if client.registered_via == Client.Via.CIMD else "",
+        "resource": grant.resource,
+        "scopes": scopes,
+        "redirect_host": urlsplit(grant.redirect_uri).netloc,
+        "action": request.get_full_path(),
+    }
+    return _no_store(render(request, "oauth/consent.html", context))
+
+
+def _authorization_error(request: HttpRequest, error: OAuth2Error) -> HttpResponse:
+    """RFC 6749 4.1.2.1: back to the client with `error=` once the client and redirect URI are
+    known to be good; otherwise an error page here, never a redirect."""
+    if error.redirect_uri:
+        oauth_request = server.create_oauth2_request(request)
+        return _no_store(server.handle_error_response(oauth_request, error))
+    context = {"error": error.error, "description": error.description or ""}
+    return _no_store(render(request, "oauth/authorize_error.html", context, status=400))
+
+
+def _no_store(response: HttpResponse) -> HttpResponse:
     response["Cache-Control"] = "no-store"
     return response
