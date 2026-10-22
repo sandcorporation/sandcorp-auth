@@ -35,6 +35,20 @@
   code.secret { display: block; word-break: break-all; font-size: .9rem; padding: 8px;
                 border: 1px dashed var(--line); border-radius: 8px; margin-top: 4px; }
   a { color: var(--accent); }
+  .label { font-size: .8rem; color: var(--muted); margin: 16px 0 4px; }
+  .client-id, .resource-url { color: var(--muted); font-size: .85rem; word-break: break-all; margin: 0; }
+  p.client-id { margin: 0 0 12px; }
+  .resource-name { font-weight: 600; }
+  ul.scopes { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; }
+  ul.scopes li { padding: 10px 12px; }
+  ul.scopes li + li { border-top: 1px solid var(--line); }
+  .scope-name { font-family: ui-monospace, monospace; font-weight: 600; }
+  .scope-description { display: block; color: var(--muted); font-size: .9rem; }
+  .granted { font-size: .75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
+  p.note { color: var(--muted); font-size: .85rem; margin: 16px 0 0; word-break: break-all; }
+  form.decision { display: flex; gap: 8px; }
+  form.decision button { flex: 1; }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
 </style>
 </head>
 <body>

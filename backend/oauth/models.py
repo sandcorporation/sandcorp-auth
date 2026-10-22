@@ -1,8 +1,12 @@
-from authlib.oauth2.rfc6749 import ClientMixin
+from datetime import datetime
+
+from authlib.oauth2.rfc6749 import AuthorizationCodeMixin, ClientMixin
+from django.conf import settings
 from django.contrib.auth.hashers import check_password
 from django.db import models
 from django.db.models import Q
 
+from adapters.clock import get_clock
 from services.redirect_uris import ALLOWED_GRANT_TYPES
 
 
@@ -132,3 +136,82 @@ class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no
 
     def check_grant_type(self, grant_type: str) -> bool:
         return grant_type in ALLOWED_GRANT_TYPES
+
+
+class Consent(models.Model):
+    """The owner's permission for one client to act on one resource with a set of scopes.
+
+    Alive while `revoked_at` is null; one live consent per (owner, client, resource). A request
+    whose scopes are all in the live consent is answered without asking again.
+    """
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="consents")
+    resource = models.ForeignKey(Resource, on_delete=models.CASCADE, related_name="consents")
+    # Sorted scope names (all of `resource`'s scopes).
+    scopes = models.JSONField(default=list)
+    granted_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "client", "resource"],
+                condition=Q(revoked_at__isnull=True),
+                name="oauth_consent_single_live",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.client.name} → {self.resource.name} [{' '.join(self.scopes)}]"
+
+    def covers(self, scopes: list[str]) -> bool:
+        return set(scopes) <= set(self.scopes)
+
+
+class AuthorizationCode(AuthorizationCodeMixin, models.Model):  # type: ignore[misc]  # no stubs
+    """A one-time code the client exchanges for tokens. Only the SHA-256 of the code is stored.
+
+    Bound to the client, redirect URI, PKCE challenge, resource, scopes and the consent that
+    allowed it. Lives `AUTHORIZATION_CODE_LIFETIME`; `used_at` is set when it is exchanged.
+    """
+
+    code_hash = models.CharField(max_length=64, unique=True)
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="+")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    consent = models.ForeignKey(Consent, on_delete=models.CASCADE, related_name="codes")
+    resource = models.ForeignKey(Resource, on_delete=models.CASCADE, related_name="+")
+    redirect_uri = models.CharField(max_length=2048)
+    scope = models.CharField(max_length=1000)
+    code_challenge = models.CharField(max_length=128)
+    code_challenge_method = models.CharField(max_length=8)
+    # When the owner last logged in (password + TOTP) before the code was issued.
+    auth_time = models.DateTimeField()
+    created_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"{self.client.name} {self.created_at:%Y-%m-%d %H:%M:%S}"
+
+    @property
+    def expires_at(self) -> datetime:
+        lifetime = settings.AUTHORIZATION_CODE_LIFETIME
+        expires: datetime = self.created_at + lifetime
+        return expires
+
+    def is_expired(self) -> bool:
+        return get_clock().now() >= self.expires_at
+
+    # authlib AuthorizationCodeMixin
+
+    def get_redirect_uri(self) -> str:
+        return self.redirect_uri
+
+    def get_scope(self) -> str:
+        return self.scope
+
+    def get_auth_time(self) -> int:
+        return int(self.auth_time.timestamp())
+
+    def get_nonce(self) -> None:
+        return None

@@ -11,6 +11,7 @@ import hashlib
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 from django.contrib.auth.models import User
@@ -198,3 +199,50 @@ def cimd_client(fake_http: FakeHttp, frozen_clock: FrozenClock, db: None) -> OAu
     found: OAuthClient | None = server.query_client(CIMD_URL)
     assert found is not None
     return found
+
+
+PORTFOLIO = "https://sandcorp.co.kr/mcp"
+NEWS = "https://news.sandcorp.co.kr/mcp"
+PKCE_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk-padding-for-43-chars"
+
+
+def use_https(client: Client) -> Client:
+    """Make every later request of `client` arrive over https (as behind NPMplus): authlib
+    refuses OAuth requests over plain http."""
+    client.defaults["HTTP_X_FORWARDED_PROTO"] = "https"
+    return client
+
+
+def authorize_query(oauth_client: OAuthClient, **overrides: str | None) -> str:
+    """A valid /authorize query for `oauth_client` (its first redirect URI, the portfolio
+    resource, scope `admin`, S256 challenge of `PKCE_VERIFIER`). An override of None drops
+    that parameter."""
+    from authlib.oauth2.rfc7636 import create_s256_code_challenge
+
+    params: dict[str, str | None] = {
+        "response_type": "code",
+        "client_id": oauth_client.client_id,
+        "redirect_uri": oauth_client.redirect_uris[0],
+        "state": "xyz",
+        "code_challenge": create_s256_code_challenge(PKCE_VERIFIER),
+        "code_challenge_method": "S256",
+        "resource": PORTFOLIO,
+        "scope": "admin",
+    }
+    params.update(overrides)
+    return urlencode({key: value for key, value in params.items() if value is not None})
+
+
+def obtain_authorization_code(
+    client: Client, oauth_client: OAuthClient, **overrides: str | None
+) -> tuple[str, str]:
+    """Run /authorize as the logged-in owner (allowing on the consent screen if it shows) and
+    return `(code, code_verifier)` from the redirect."""
+    use_https(client)
+    url = "/authorize?" + authorize_query(oauth_client, **overrides)
+    response = client.get(url)
+    if response.status_code == 200:
+        response = client.post(url, {"decision": "allow"})
+    assert response.status_code == 302, response.content
+    query = parse_qs(urlsplit(response["Location"]).query)
+    return query["code"][0], PKCE_VERIFIER

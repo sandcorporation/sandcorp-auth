@@ -98,6 +98,7 @@ if not SIGNING_KEY_ENCRYPTION_KEY:
     raise RuntimeError("SIGNING_KEY_ENCRYPTION_KEY is required when DJANGO_DEBUG is not 1")
 # Access token lifetime; a rotated-out signing key stays in the JWKS this long.
 ACCESS_TOKEN_LIFETIME = timedelta(minutes=10)
+AUTHORIZATION_CODE_LIFETIME = timedelta(minutes=5)
 
 # Owner login (accounts app). Django `login()` happens only after password + TOTP.
 LOGIN_URL = "/login"

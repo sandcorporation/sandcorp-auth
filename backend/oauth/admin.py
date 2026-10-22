@@ -4,13 +4,17 @@ from django.contrib import admin
 from django.db.models import QuerySet
 from django.http import HttpRequest
 
-from oauth.models import Client, Resource, Scope
+from oauth.models import AuthorizationCode, Client, Consent, Resource, Scope
 
 if TYPE_CHECKING:
     _ResourceAdmin = admin.ModelAdmin[Resource]
     _ClientAdmin = admin.ModelAdmin[Client]
     _ScopeInline = admin.TabularInline[Scope, Resource]
+    _ConsentAdmin = admin.ModelAdmin[Consent]
+    _AuthorizationCodeAdmin = admin.ModelAdmin[AuthorizationCode]
 else:  # generic only in django-stubs
+    _ConsentAdmin = admin.ModelAdmin
+    _AuthorizationCodeAdmin = admin.ModelAdmin
     _ResourceAdmin = admin.ModelAdmin
     _ClientAdmin = admin.ModelAdmin
     _ScopeInline = admin.TabularInline
@@ -62,3 +66,47 @@ class ClientAdmin(_ClientAdmin):
     def clear_cimd_cache(self, request: HttpRequest, queryset: QuerySet[Client]) -> None:
         count = queryset.filter(registered_via=Client.Via.CIMD).update(metadata_expires_at=None)
         self.message_user(request, f"CIMD 클라이언트 {count}개의 캐시를 비웠습니다.")
+
+
+class ReadOnlyAdminMixin:
+    """Rows written only by the authorization flow: admin lists and shows them."""
+
+    def has_add_permission(self, request: HttpRequest) -> bool:
+        return False
+
+    def has_change_permission(self, request: HttpRequest, obj: object = None) -> bool:
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: object = None) -> bool:
+        return False
+
+
+@admin.register(Consent)
+class ConsentAdmin(ReadOnlyAdminMixin, _ConsentAdmin):
+    """What the owner allowed: when, which client, which resource and scopes. Revoking a
+    consent (with its refresh token family) comes with the revocation ticket."""
+
+    list_display = ["client", "resource", "scope_list", "granted_at", "revoked_at", "is_live"]
+    list_filter = ["resource", ("revoked_at", admin.EmptyFieldListFilter)]
+    search_fields = ["client__name", "client__client_id"]
+    ordering = ["-granted_at"]
+    list_select_related = ["client", "resource"]
+
+    @admin.display(description="스코프")
+    def scope_list(self, obj: Consent) -> str:
+        return " ".join(obj.scopes)
+
+    @admin.display(description="살아 있음", boolean=True)
+    def is_live(self, obj: Consent) -> bool:
+        return obj.revoked_at is None
+
+
+@admin.register(AuthorizationCode)
+class AuthorizationCodeAdmin(ReadOnlyAdminMixin, _AuthorizationCodeAdmin):
+    """Issued authorization codes (hash only), for following a consent to its codes."""
+
+    list_display = ["client", "resource", "scope", "created_at", "used_at"]
+    list_filter = ["resource"]
+    ordering = ["-created_at"]
+    list_select_related = ["client", "resource"]
+    exclude = ["code_hash"]
