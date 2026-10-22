@@ -118,10 +118,14 @@ CSRF_COOKIE_SECURE = not DEBUG
 
 # Request limiting (services/throttle.py): per rule name, `limit` failures within
 # `window_seconds` block the key for `block_seconds`. A later ticket adds "token".
-THROTTLE = {
+THROTTLE: dict[str, dict[str, int | str]] = {
+    # Login failures per IP: 5 in 15 minutes block that address for 15 minutes.
     "login": {"limit": 5, "window_seconds": 15 * 60, "block_seconds": 15 * 60},
     # Dynamic client registration: every request counts, 10 per hour per IP.
     "register": {"limit": 10, "window_seconds": 3600, "block_seconds": 3600},
+    # Login failures per account: no lock (anyone knows the username), only a growing delay
+    # of 1, 2, 4 ... up to 60 seconds; forgotten after 15 minutes without a failure.
+    "login_account": {"mode": "backoff", "max_delay_seconds": 60, "window_seconds": 15 * 60},
 }
 # Behind NPMplus the caller's address is the first X-Forwarded-For entry. Set 0 when the app is
 # reached directly (then REMOTE_ADDR is used).

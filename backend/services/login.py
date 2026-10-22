@@ -1,9 +1,16 @@
 """Login decisions, request limiting and audit logging, gathered in one place.
 
 The views only translate these answers into redirects; they never judge credentials themselves.
-Every attempt is limited per account (`login:user:<username>`) and per address
-(`login:ip:<ip>`) with the `login` rule of `settings.THROTTLE`. While either is blocked the
-views must not judge credentials at all (`login_blocked`), so timing tells nothing.
+Two limits apply to every attempt:
+
+- per address (`login:ip:<ip>`, rule `login`): 5 failures in 15 minutes block the IP for 15
+  minutes;
+- per account (`login_account:user:<username>`, rule `login_account`): no lock, because anyone
+  knows the owner's username and could keep him out. Each consecutive failure only delays the
+  next attempt (1, 2, 4 ... 60 seconds).
+
+While either refuses (`login_blocked`) the views must not judge credentials at all, so timing
+and messages tell nothing about the password.
 """
 
 from django.contrib.auth import authenticate
@@ -12,37 +19,47 @@ from django.contrib.auth.models import User
 from services import audit, throttle
 from services.totp import accept_code, confirmed_device, enrollment_device
 
-RULE = "login"
+IP_RULE = "login"
+ACCOUNT_RULE = "login_account"
 
 
-def _keys(username: str, ip: str) -> list[tuple[str, str]]:
-    return [("user", f"user:{username}"), ("ip", f"ip:{ip}")]
+def _ip_key(ip: str) -> str:
+    return f"ip:{ip}"
+
+
+def _account_key(username: str) -> str:
+    return f"user:{username}"
 
 
 def login_blocked(username: str, ip: str) -> int:
-    """Seconds until this account or address may try again; 0 when it may try now.
-    A refused attempt is audited as `login.locked`."""
-    wait = max(throttle.check(RULE, key).retry_after for _, key in _keys(username, ip))
-    if wait:
+    """Seconds until this address and account may try again; 0 when they may try now.
+    A refusal is audited: `login.locked` when the address is blocked, else `login.delayed`."""
+    ip_wait = throttle.check(IP_RULE, _ip_key(ip)).retry_after
+    account_wait = throttle.check(ACCOUNT_RULE, _account_key(username)).retry_after
+    if ip_wait:
         audit.record(audit.LOGIN_LOCKED, actor=username, ip=ip, detail={"refused": True})
-    return wait
+    elif account_wait:
+        audit.record(
+            audit.LOGIN_DELAYED, actor=username, ip=ip, detail={"wait_seconds": account_wait}
+        )
+    return max(ip_wait, account_wait)
 
 
 def login_failed(kind: str, username: str, ip: str, step: str) -> int:
-    """Count and audit one failed attempt; seconds of the lock it caused (0 if none)."""
+    """Count and audit one failed attempt; seconds of the address block it caused (0 if none).
+    The account delay it starts is not reported here: the next attempt meets it."""
     audit.record(kind, actor=username, ip=ip, detail={"step": step})
-    wait = 0
-    for scope, key in _keys(username, ip):
-        decision = throttle.hit(RULE, key)
-        if not decision.allowed:
-            audit.record(
-                audit.LOGIN_LOCKED,
-                actor=username,
-                ip=ip,
-                detail={"scope": scope, "step": step, "seconds": decision.retry_after},
-            )
-            wait = max(wait, decision.retry_after)
-    return wait
+    throttle.backoff_hit(ACCOUNT_RULE, _account_key(username))
+    decision = throttle.hit(IP_RULE, _ip_key(ip))
+    if decision.allowed:
+        return 0
+    audit.record(
+        audit.LOGIN_LOCKED,
+        actor=username,
+        ip=ip,
+        detail={"scope": "ip", "step": step, "seconds": decision.retry_after},
+    )
+    return decision.retry_after
 
 
 def login_succeeded(user: User, ip: str, *, enrolled_now: bool) -> None:
@@ -51,8 +68,8 @@ def login_succeeded(user: User, ip: str, *, enrolled_now: bool) -> None:
     if enrolled_now:
         audit.record(audit.LOGIN_TOTP_ENROLLED, actor=username, ip=ip)
     audit.record(audit.LOGIN_SUCCEEDED, actor=username, ip=ip)
-    for _, key in _keys(username, ip):
-        throttle.reset(RULE, key)
+    throttle.reset(IP_RULE, _ip_key(ip))
+    throttle.reset(ACCOUNT_RULE, _account_key(username))
 
 
 def check_password_step(username: str, password: str) -> User | None:

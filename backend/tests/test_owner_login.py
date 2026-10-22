@@ -63,6 +63,7 @@ def test_full_login_lifecycle(client: Client, owner: User, frozen_clock: FrozenC
     response = client.post("/login", {"username": OWNER_USERNAME, "password": "nope-nope-nope"})
     assert response.status_code == 200
     assert "맞지 않습니다" in response.content.decode()
+    frozen_clock.advance(1)  # the account delay after one failure
 
     # Right password, TOTP not enrolled: only the setup screen is reachable.
     assert login_password(client, next_url=ADMIN) == "/totp/setup"
@@ -77,7 +78,8 @@ def test_full_login_lifecycle(client: Client, owner: User, frozen_clock: FrozenC
     code = totp_code(owner)
     response = client.post("/totp/setup", {"code": wrong_code(code)})
     assert response.status_code == 200 and "맞지 않습니다" in response.content.decode()
-    response = client.post("/totp/setup", {"code": code})
+    frozen_clock.advance(2)  # the account delay after the second failure
+    response = client.post("/totp/setup", {"code": totp_code(owner)})
     assert response["Location"] == ADMIN
     assert client.get(ADMIN).status_code == 200
 
@@ -92,6 +94,8 @@ def test_full_login_lifecycle(client: Client, owner: User, frozen_clock: FrozenC
     assert client.get(ADMIN).status_code == 302  # half-authenticated is not logged in
     code = totp_code(owner)
     assert client.post("/login/totp", {"code": wrong_code(code)}).status_code == 200
+    frozen_clock.advance(1)
+    code = totp_code(owner)
     assert client.post("/login/totp", {"code": code})["Location"] == "/"
     client.post("/logout")
     login_password(client)
@@ -123,11 +127,14 @@ def test_reset_totp_forces_enrollment_again(
     assert logged_in_client.get(ADMIN).status_code == 200
 
 
-def test_set_password_ends_sessions_and_changes_the_password(logged_in_client: Client) -> None:
+def test_set_password_ends_sessions_and_changes_the_password(
+    logged_in_client: Client, frozen_clock: FrozenClock
+) -> None:
     new_password = "another long passphrase"
     call_command("owner", "set-password", "--password", new_password, stdout=io.StringIO())
     assert logged_in_client.get(ADMIN).status_code == 302
     assert login_password(logged_in_client) == ""
+    frozen_clock.advance(1)
     assert login_password(logged_in_client, password=new_password) == "/login/totp"
 
 
