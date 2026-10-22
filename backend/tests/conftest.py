@@ -1,12 +1,14 @@
 """Shared fixtures for backend HTTP-boundary tests.
 
-Fake adapters get registered here as they appear: `frozen_clock`, `recording_randomness`.
+Fake adapters get registered here as they appear: `frozen_clock`, `recording_randomness`,
+`fake_http` (documents by URL, host addresses by name).
 `signing_key` gives a test an active token signing key.
 `owner` is the owner account (before TOTP enrollment); `logged_in_client` is a test client that
 finished password + TOTP (Django `login()` done), with `frozen_clock` running.
 """
 
 import hashlib
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
@@ -16,7 +18,9 @@ from django.test import Client
 from django.utils import timezone
 
 from adapters.clock import set_clock
+from adapters.http import FetchedDocument, FetchError, set_http_client
 from adapters.randomness import set_randomness
+from oauth.models import Client as OAuthClient
 from oauth.models import SigningKey
 from services.owner import create_owner
 from services.signing import create_signing_key
@@ -98,3 +102,99 @@ def logged_in_client(client: Client, owner: User, frozen_clock: FrozenClock) -> 
     client.post("/login", {"username": OWNER_USERNAME, "password": OWNER_PASSWORD})
     client.post("/totp/setup", {"code": totp_code(owner)})
     return client
+
+
+class FakeHttp:
+    """Answers `fetch_json` from documents the test put in, and `resolve` from a host table
+    (every host resolves to a public address unless the test says otherwise)."""
+
+    PUBLIC_ADDRESS = "93.184.215.14"
+
+    def __init__(self) -> None:
+        self.documents: dict[str, FetchedDocument] = {}
+        self.addresses: dict[str, list[str]] = {}
+        self.fetched: list[str] = []
+
+    def put_json(
+        self,
+        url: str,
+        document: object,
+        *,
+        cache_control: str | None = None,
+        content_type: str = "application/json",
+    ) -> None:
+        headers = {"content-type": content_type}
+        if cache_control is not None:
+            headers["cache-control"] = cache_control
+        body = document if isinstance(document, bytes) else json.dumps(document).encode()
+        self.documents[url] = FetchedDocument(200, headers, body)
+
+    def resolve(self, host: str) -> list[str]:
+        return self.addresses.get(host, [self.PUBLIC_ADDRESS])
+
+    def fetch_json(self, url: str, *, max_bytes: int, timeout: float) -> FetchedDocument:
+        self.fetched.append(url)
+        if url not in self.documents:
+            raise FetchError(f"no fake document at {url}")
+        document = self.documents[url]
+        return FetchedDocument(document.status, document.headers, document.body[: max_bytes + 1])
+
+
+@pytest.fixture
+def fake_http() -> Iterator[FakeHttp]:
+    """Install a fake HTTP client; `put_json(url, doc)` registers a document, `fetched` records
+    every fetch, `addresses[host] = [...]` overrides name resolution."""
+    fake = FakeHttp()
+    previous = set_http_client(fake)
+    yield fake
+    set_http_client(previous)
+
+
+def cimd_document(url: str, **overrides: object) -> dict[str, object]:
+    """A valid client metadata document published at `url`."""
+    document: dict[str, object] = {
+        "client_id": url,
+        "client_name": "Example MCP client",
+        "redirect_uris": ["https://app.example/callback", "http://localhost:3000/callback"],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }
+    document.update(overrides)
+    return document
+
+
+CIMD_URL = "https://app.example/client.json"
+
+
+def register(client: Client, **metadata: object) -> tuple[int, dict[str, object]]:
+    """POST /register with a valid public-client body, overridden by `metadata`."""
+    body: dict[str, object] = {
+        "client_name": "Claude Code",
+        "redirect_uris": ["http://localhost:33418/callback"],
+    }
+    body.update(metadata)
+    response = client.post("/register", json.dumps(body), content_type="application/json")
+    payload: dict[str, object] = response.json()
+    return response.status_code, payload
+
+
+@pytest.fixture
+def dcr_client(client: Client, db: None) -> OAuthClient:
+    """A public client registered through POST /register (redirect_uri
+    http://localhost:33418/callback)."""
+    status, payload = register(client)
+    assert status == 201, payload
+    return OAuthClient.objects.get(client_id=payload["client_id"])
+
+
+@pytest.fixture
+def cimd_client(fake_http: FakeHttp, frozen_clock: FrozenClock, db: None) -> OAuthClient:
+    """A CIMD client (client_id `CIMD_URL`) fetched through the fake HTTP adapter at the
+    frozen clock's start; cached for an hour."""
+    from oauth.server import server
+
+    fake_http.put_json(CIMD_URL, cimd_document(CIMD_URL))
+    found: OAuthClient | None = server.query_client(CIMD_URL)
+    assert found is not None
+    return found

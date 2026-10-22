@@ -19,6 +19,8 @@ LOGIN_LOCKED: Final = "login.locked"
 LOGIN_SUCCEEDED: Final = "login.succeeded"
 LOGIN_TOTP_ENROLLED: Final = "login.totp_enrolled"
 LOGOUT: Final = "logout"
+CLIENT_REGISTERED: Final = "client.registered"
+CLIENT_CIMD_REJECTED: Final = "client.cimd_rejected"
 
 SECRET_KEYS: Final = frozenset({"password", "code", "token", "secret", "otp"})
 

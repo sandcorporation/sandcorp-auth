@@ -16,6 +16,10 @@ _Avoid_: OTP 기기, 2FA 장치
 대표를 대신해 토큰을 받는 프로그램(claude.ai 커넥터, Claude Code, 사이트 자체의 관리 화면). 동적 등록되거나 admin에서 등록된다.
 _Avoid_: 앱, 커넥터
 
+**클라이언트 ID 메타데이터 문서(Client ID Metadata Document, CIMD)**:
+클라이언트가 자기 `client_id`로 쓰는 https URL(경로 포함)에 올려 둔 JSON 문서. 이름·리다이렉트 URI를 담고, 문서의 `client_id`는 그 URL과 정확히 같아야 한다. 이 서비스는 처음 보는 URL `client_id`를 받으면 문서를 가져와 검증하고 클라이언트 표에 캐시(기본 1시간, `Cache-Control: max-age`를 따르되 최대 24시간)한다. 클라이언트 등록의 1순위이며, Dynamic Client Registration(DCR)은 호환용이다. 어느 쪽이든 등록만으로는 아무 권한도 없다.
+_Avoid_: 클라이언트 매니페스트, 원격 등록
+
 **리소스(Resource)**:
 토큰으로 보호되는 사이트 하나(portfolio, 뉴스). 토큰의 audience가 된다.
 _Avoid_: 서비스, API, 대상

@@ -14,6 +14,7 @@ dependencies = [
     "cryptography>=50.0.2",
     "pyotp>=2.10.0",
     "qrcode>=8.2",
+    "authlib>=1.9.1,<1.10",
 ]
 
 [dependency-groups]
@@ -51,6 +52,12 @@ exclude = ["^migrations/"]
 [[tool.mypy.overrides]]
 module = ["*.migrations.*"]
 ignore_errors = true
+
+[[tool.mypy.overrides]]
+# authlib ships no type hints; our subclasses (oauth/server.py, oauth/models.py) type their
+# own method signatures.
+module = ["authlib.*"]
+ignore_missing_imports = true
 
 [tool.django-stubs]
 django_settings_module = "config.test_settings"
