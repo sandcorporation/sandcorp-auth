@@ -1,0 +1,22 @@
+# 로컬 개발·시험용 Postgres. 운영과 같은 엔진으로 시험한다(포트 15444, 프로젝트 sandcorp-auth-dev).
+# portfolio-dev(15442)와 같은 머신에서 함께 띄울 수 있게 포트와 프로젝트 이름을 나눴다.
+#   docker compose up -d db
+name: sandcorp-auth-dev
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: sandcorp_auth
+      POSTGRES_USER: sandcorp_auth
+      POSTGRES_PASSWORD: sandcorp_auth
+    ports:
+      - "127.0.0.1:15444:5432"
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sandcorp_auth -d sandcorp_auth"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  dbdata:

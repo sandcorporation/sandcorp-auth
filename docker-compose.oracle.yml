@@ -1,0 +1,10 @@
+# oracle overrides. 80/443 belong to NPMplus (host network), which terminates TLS and proxies
+# auth.sandcorp.co.kr -> http://172.17.0.1:18093. web binds only to the docker bridge gateway.
+#
+# Build containers on oracle cannot resolve DNS over the bridge (EAI_AGAIN), so builds use host network.
+services:
+  web:
+    build:
+      network: host
+    ports: !override
+      - "${HTTP_BIND:-172.17.0.1}:${HTTP_PORT:-18093}:8000"
