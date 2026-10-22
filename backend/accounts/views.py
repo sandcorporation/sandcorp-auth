@@ -1,5 +1,6 @@
 """Owner login: password → (TOTP setup | TOTP code) → Django login → `next`."""
 
+import math
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -12,13 +13,28 @@ from django.utils.safestring import mark_safe
 from django.views.decorators.http import require_http_methods, require_POST
 
 from accounts.session import NEXT_KEY, PENDING_USER_KEY, pending_user, safe_next
-from services.login import check_password_step, check_totp_enrollment, check_totp_step
+from core.http import client_ip
+from services import audit
+from services.login import (
+    check_password_step,
+    check_totp_enrollment,
+    check_totp_step,
+    login_blocked,
+    login_failed,
+    login_succeeded,
+)
 from services.totp import enrollment_device, is_enrolled, provisioning_uri, qr_svg, secret_of
 
 BACKEND = "django.contrib.auth.backends.ModelBackend"
 
 
-def _finish(request: HttpRequest, user: User) -> HttpResponse:
+def _locked_message(seconds: int) -> str:
+    minutes = max(1, math.ceil(seconds / 60))
+    return f"로그인 시도가 너무 많습니다. 잠시 뒤 다시 시도하세요(약 {minutes}분)."
+
+
+def _finish(request: HttpRequest, user: User, *, enrolled_now: bool = False) -> HttpResponse:
+    login_succeeded(user, client_ip(request), enrolled_now=enrolled_now)
     target = request.session.get(NEXT_KEY)
     login(request, user, backend=BACKEND)
     request.session.pop(PENDING_USER_KEY, None)
@@ -35,7 +51,9 @@ def login_view(request: HttpRequest) -> HttpResponse:
     username = ""
     if request.method == "POST":
         username = request.POST.get("username", "")
-        user = check_password_step(username, request.POST.get("password", ""))
+        ip = client_ip(request)
+        wait = login_blocked(username, ip)
+        user = None if wait else check_password_step(username, request.POST.get("password", ""))
         if user is not None:
             logout(request)  # a fresh session for the new attempt
             request.session[PENDING_USER_KEY] = user.pk
@@ -44,7 +62,9 @@ def login_view(request: HttpRequest) -> HttpResponse:
             if is_enrolled(user):
                 return redirect("accounts:login_totp")
             return redirect("accounts:totp_setup")
-        error = "아이디 또는 비밀번호가 맞지 않습니다."
+        if not wait:
+            wait = login_failed(audit.LOGIN_PASSWORD_FAILED, username, ip, "password")
+        error = _locked_message(wait) if wait else "아이디 또는 비밀번호가 맞지 않습니다."
     context = {"error": error, "username": username, "next": next_url or ""}
     return render(request, "accounts/login.html", context)
 
@@ -56,9 +76,17 @@ def login_totp_view(request: HttpRequest) -> HttpResponse:
         return redirect("accounts:login")
     error = None
     if request.method == "POST":
-        if check_totp_step(user, request.POST.get("code", "")):
+        username, ip = user.get_username(), client_ip(request)
+        wait = login_blocked(username, ip)
+        if not wait and check_totp_step(user, request.POST.get("code", "")):
             return _finish(request, user)
-        error = "인증 코드가 맞지 않습니다. 앱에 새로 뜬 코드를 넣어 주세요."
+        if not wait:
+            wait = login_failed(audit.LOGIN_TOTP_FAILED, username, ip, "totp")
+        error = (
+            _locked_message(wait)
+            if wait
+            else "인증 코드가 맞지 않습니다. 앱에 새로 뜬 코드를 넣어 주세요."
+        )
     return render(request, "accounts/login_totp.html", {"error": error})
 
 
@@ -70,9 +98,17 @@ def totp_setup_view(request: HttpRequest) -> HttpResponse:
     device = enrollment_device(user)
     error = None
     if request.method == "POST":
-        if check_totp_enrollment(user, request.POST.get("code", "")):
-            return _finish(request, user)
-        error = "인증 코드가 맞지 않습니다. 시계가 맞는지 확인하고 새 코드를 넣어 주세요."
+        username, ip = user.get_username(), client_ip(request)
+        wait = login_blocked(username, ip)
+        if not wait and check_totp_enrollment(user, request.POST.get("code", "")):
+            return _finish(request, user, enrolled_now=True)
+        if not wait:
+            wait = login_failed(audit.LOGIN_TOTP_FAILED, username, ip, "enrollment")
+        error = (
+            _locked_message(wait)
+            if wait
+            else "인증 코드가 맞지 않습니다. 시계가 맞는지 확인하고 새 코드를 넣어 주세요."
+        )
     uri = provisioning_uri(device)
     context = {
         "error": error,
@@ -85,6 +121,8 @@ def totp_setup_view(request: HttpRequest) -> HttpResponse:
 
 @require_POST
 def logout_view(request: HttpRequest) -> HttpResponse:
+    if request.user.is_authenticated:
+        audit.record(audit.LOGOUT, actor=request.user.get_username(), ip=client_ip(request))
     logout(request)
     return redirect("accounts:login")
 
