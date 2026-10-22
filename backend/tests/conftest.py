@@ -11,6 +11,7 @@ import hashlib
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
@@ -26,6 +27,9 @@ from oauth.models import SigningKey
 from services.owner import create_owner
 from services.signing import create_signing_key
 from services.totp import current_code, enrollment_device
+
+if TYPE_CHECKING:  # the test client's response type exists only in django-stubs
+    from django.test.client import _MonkeyPatchedWSGIResponse as TestResponse
 
 OWNER_USERNAME = "farrar142"
 OWNER_PASSWORD = "correct horse battery staple"
@@ -246,3 +250,35 @@ def obtain_authorization_code(
     assert response.status_code == 302, response.content
     query = parse_qs(urlsplit(response["Location"]).query)
     return query["code"][0], PKCE_VERIFIER
+
+
+TOKEN_FIELDS = {"access_token", "token_type", "expires_in", "refresh_token", "scope"}
+
+
+def exchange_code(
+    client: Client, oauth_client: OAuthClient, code: str, verifier: str, /, **overrides: str | None
+) -> "TestResponse":
+    """POST /token with `grant_type=authorization_code` for `oauth_client` (a public client:
+    `client_id` in the form). An override of None drops that field."""
+    use_https(client)
+    form: dict[str, str | None] = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": oauth_client.redirect_uris[0],
+        "client_id": oauth_client.client_id,
+        "code_verifier": verifier,
+    }
+    form.update(overrides)
+    return client.post("/token", {key: value for key, value in form.items() if value is not None})
+
+
+def obtain_tokens(
+    client: Client, oauth_client: OAuthClient, **authorize_overrides: str | None
+) -> dict[str, str | int]:
+    """Authorize as the logged-in owner, exchange the code, and return the token response
+    (`access_token`, `token_type`, `expires_in`, `refresh_token`, `scope`)."""
+    code, verifier = obtain_authorization_code(client, oauth_client, **authorize_overrides)
+    response = exchange_code(client, oauth_client, code, verifier)
+    assert response.status_code == 200, response.content
+    tokens: dict[str, str | int] = response.json()
+    return tokens

@@ -3,7 +3,9 @@
 `server` is the `AuthorizationServer` every OAuth view uses. Clients come from
 `services.clients.find_client` (stored clients, then CIMD). Registered here now: the dynamic
 client registration endpoint (RFC 7591) and the authorization code grant with required PKCE
-S256 and RFC 8707 `resource` (`oauth.grants`). The refresh token grant and the revocation
+S256 and RFC 8707 `resource` (`oauth.grants`), whose tokens come from `oauth.tokens` (JWT
+access token with `aud` = the code's resource; refresh token stored as a hash in the consent's
+family by `save_token`). The refresh token grant and the revocation
 endpoint are registered by later tickets with `server.register_grant(...)` /
 `server.register_endpoint(...)` at the bottom of this module.
 """
@@ -11,6 +13,7 @@ endpoint are registered by later tickets with `server.register_grant(...)` /
 from typing import Final
 
 from authlib.integrations.django_oauth2 import AuthorizationServer
+from authlib.oauth2 import OAuth2Request
 from authlib.oauth2.rfc6749 import InvalidRequestError, JsonRequest
 from authlib.oauth2.rfc7591 import (
     ClientRegistrationEndpoint,
@@ -19,10 +22,19 @@ from authlib.oauth2.rfc7591 import (
 )
 from authlib.oauth2.rfc8414 import AuthorizationServerMetadata
 from django.conf import settings
+from django.contrib.auth.base_user import AbstractBaseUser
 
 from adapters.clock import get_clock
-from oauth.grants import S256CodeChallenge, SandcorpAuthorizationCodeGrant
-from oauth.models import Client, Scope
+from oauth.grants import S256CodeChallenge, SandcorpAuthorizationCodeGrant, request_ip
+from oauth.models import AuthorizationCode, Client, Resource, Scope
+from oauth.tokens import (
+    SandcorpTokenGenerator,
+    TokenResponse,
+    access_token_jti,
+    live_family,
+    store_refresh_token,
+)
+from services import audit
 from services.clients import find_client
 from services.redirect_uris import ALLOWED_GRANT_TYPES, valid_redirect_uri
 from services.signing import random_token
@@ -63,8 +75,60 @@ def authorization_server_metadata() -> dict[str, JSON]:
 
 
 class SandcorpAuthorizationServer(AuthorizationServer):  # type: ignore[misc]  # no stubs
+    token_generator: SandcorpTokenGenerator
+
     def query_client(self, client_id: str) -> Client | None:
         return find_client(client_id)
+
+    def create_bearer_token_generator(self) -> SandcorpTokenGenerator:
+        # Called by authlib's __init__ (load_config) to register the "default" generator.
+        self.token_generator = SandcorpTokenGenerator()
+        return self.token_generator
+
+    def generate_token(
+        self,
+        grant_type: str,
+        client: Client,
+        user: AbstractBaseUser | None = None,
+        scope: str | None = None,
+        expires_in: int | None = None,
+        include_refresh_token: bool = True,
+        *,
+        resource: Resource | None = None,
+    ) -> TokenResponse:
+        """authlib's signature plus `resource`, the access token's audience (RFC 8707)."""
+        return self.token_generator.generate(
+            grant_type,
+            client,
+            user=user,
+            scope=scope,
+            expires_in=expires_in,
+            include_refresh_token=include_refresh_token,
+            resource=resource,
+        )
+
+    def save_token(self, token: TokenResponse, request: OAuth2Request) -> None:
+        """Access tokens are self-contained JWTs and are not stored. The refresh token goes
+        (as a hash) into the live family of the consent behind the authorization code."""
+        code: AuthorizationCode = request.authorization_code
+        family = live_family(code.consent)
+        jti = access_token_jti(token["access_token"])
+        if "refresh_token" in token:
+            store_refresh_token(family, token["refresh_token"], token["scope"], jti)
+        client: Client = request.client
+        audit.record(
+            audit.TOKEN_ISSUED,
+            actor=code.user.get_username(),
+            client_id=client.client_id,
+            ip=request_ip(request),
+            detail={
+                "client_id": client.client_id,
+                "resource": code.resource.url,
+                "scope": token["scope"],
+                "jti": jti,
+                "family": family.pk,
+            },
+        )
 
 
 class OpenRegistration:
@@ -127,6 +191,6 @@ class DynamicClientRegistration(ClientRegistrationEndpoint):  # type: ignore[mis
         )
 
 
-server = SandcorpAuthorizationServer(Client, None)  # token model: save_token is #9's
+server = SandcorpAuthorizationServer(Client, None)  # no token model: see save_token
 server.register_endpoint(DynamicClientRegistration)
 server.register_grant(SandcorpAuthorizationCodeGrant, [S256CodeChallenge(required=True)])

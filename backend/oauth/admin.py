@@ -4,7 +4,15 @@ from django.contrib import admin
 from django.db.models import QuerySet
 from django.http import HttpRequest
 
-from oauth.models import AuthorizationCode, Client, Consent, Resource, Scope
+from oauth.models import (
+    AuthorizationCode,
+    Client,
+    Consent,
+    RefreshToken,
+    RefreshTokenFamily,
+    Resource,
+    Scope,
+)
 
 if TYPE_CHECKING:
     _ResourceAdmin = admin.ModelAdmin[Resource]
@@ -12,7 +20,11 @@ if TYPE_CHECKING:
     _ScopeInline = admin.TabularInline[Scope, Resource]
     _ConsentAdmin = admin.ModelAdmin[Consent]
     _AuthorizationCodeAdmin = admin.ModelAdmin[AuthorizationCode]
+    _RefreshTokenFamilyAdmin = admin.ModelAdmin[RefreshTokenFamily]
+    _RefreshTokenAdmin = admin.ModelAdmin[RefreshToken]
 else:  # generic only in django-stubs
+    _RefreshTokenFamilyAdmin = admin.ModelAdmin
+    _RefreshTokenAdmin = admin.ModelAdmin
     _ConsentAdmin = admin.ModelAdmin
     _AuthorizationCodeAdmin = admin.ModelAdmin
     _ResourceAdmin = admin.ModelAdmin
@@ -110,3 +122,25 @@ class AuthorizationCodeAdmin(ReadOnlyAdminMixin, _AuthorizationCodeAdmin):
     ordering = ["-created_at"]
     list_select_related = ["client", "resource"]
     exclude = ["code_hash"]
+
+
+@admin.register(RefreshTokenFamily)
+class RefreshTokenFamilyAdmin(ReadOnlyAdminMixin, _RefreshTokenFamilyAdmin):
+    """Refresh token families, one live per consent. Revoking one comes with #10."""
+
+    list_display = ["client", "resource", "created_at", "revoked_at", "revoked_reason"]
+    list_filter = ["resource", ("revoked_at", admin.EmptyFieldListFilter)]
+    search_fields = ["client__name", "client__client_id"]
+    ordering = ["-created_at"]
+    list_select_related = ["client", "resource"]
+
+
+@admin.register(RefreshToken)
+class RefreshTokenAdmin(ReadOnlyAdminMixin, _RefreshTokenAdmin):
+    """Issued refresh tokens (hash only): when issued, until when, whether revoked/replaced."""
+
+    list_display = ["family", "scope", "issued_at", "expires_at", "revoked_at", "replaced_by"]
+    list_filter = [("revoked_at", admin.EmptyFieldListFilter)]
+    ordering = ["-issued_at"]
+    list_select_related = ["family__client", "family__resource"]
+    exclude = ["token_hash"]

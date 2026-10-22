@@ -5,19 +5,28 @@ validation is authlib's (client, redirect URI, response type, PKCE) followed by 
 one `resource` that is a registered resource URL, and a non-empty `scope` made only of that
 resource's scope names. Codes are stored as SHA-256 hashes, bound to the consent that allowed
 them, and are good once for `AUTHORIZATION_CODE_LIFETIME`.
+
+At the token endpoint the code is claimed atomically (`used_at`), a `resource` sent there must
+equal the code's, and the access token's `aud` is the code's resource. A used code that comes
+back revokes the refresh token family its consent opened (`oauth.tokens.report_code_reuse`).
 """
 
 import hashlib
 
 from authlib.oauth2 import OAuth2Error, OAuth2Request
-from authlib.oauth2.rfc6749 import InvalidRequestError, InvalidScopeError
+from authlib.oauth2.rfc6749 import InvalidGrantError, InvalidRequestError, InvalidScopeError
 from authlib.oauth2.rfc6749.grants import AuthorizationCodeGrant
 from authlib.oauth2.rfc7636 import CodeChallenge
 from django.contrib.auth.models import User
+from django.db import transaction
 
 from adapters.clock import get_clock
+from core.http import client_ip
 from oauth.models import AuthorizationCode, Client, Consent, Resource
+from oauth.tokens import TokenResponse, report_code_reuse
 from services.signing import random_token
+
+type Headers = list[tuple[str, str]]
 
 
 class InvalidTargetError(OAuth2Error):  # type: ignore[misc]  # authlib has no type stubs
@@ -71,6 +80,18 @@ def live_consent(user: User, client: Client, resource: Resource) -> Consent | No
     return Consent.objects.filter(
         user=user, client=client, resource=resource, revoked_at__isnull=True
     ).first()
+
+
+def request_ip(request: OAuth2Request) -> str:
+    return client_ip(request._request)  # authlib's Django request keeps the HttpRequest here
+
+
+def find_used_authorization_code(code: str, client: Client) -> AuthorizationCode | None:
+    return (
+        AuthorizationCode.objects.select_related("user", "client", "resource", "consent")
+        .filter(code_hash=hash_code(code), client=client, used_at__isnull=False)
+        .first()
+    )
 
 
 def find_authorization_code(code: str, client: Client) -> AuthorizationCode | None:
@@ -130,12 +151,57 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
         return self.issued
 
     def query_authorization_code(self, code: str, client: Client) -> AuthorizationCode | None:
-        return find_authorization_code(code, client)
+        found = find_authorization_code(code, client)
+        if found is None:
+            replayed = find_used_authorization_code(code, client)
+            if replayed is not None:
+                report_code_reuse(replayed, request_ip(self.request))
+        return found
+
+    def validate_token_request(self) -> None:
+        super().validate_token_request()
+        code: AuthorizationCode = self.request.authorization_code
+        # RFC 8707 2.2: optional here, but if sent it must be the resource the code is for.
+        values: list[str] = self.request.payload.datalist.get("resource", [])
+        if values and values != [code.resource.url]:
+            raise InvalidTargetError("'resource' is not the resource of the authorization code.")
+
+    def create_token_response(self) -> tuple[int, TokenResponse, Headers]:
+        code: AuthorizationCode = self.request.authorization_code
+        # Claim the code first, so two concurrent exchanges cannot both get tokens.
+        with transaction.atomic():
+            claimed = AuthorizationCode.objects.filter(pk=code.pk, used_at__isnull=True).update(
+                used_at=get_clock().now()
+            )
+            if claimed:
+                response: tuple[int, TokenResponse, Headers] = super().create_token_response()
+                return response
+        report_code_reuse(code, request_ip(self.request))
+        raise InvalidGrantError("Invalid 'code' in request.")
+
+    def generate_token(
+        self,
+        user: User | None = None,
+        scope: str | None = None,
+        grant_type: str | None = None,
+        expires_in: int | None = None,
+        include_refresh_token: bool = True,
+    ) -> TokenResponse:
+        code: AuthorizationCode = self.request.authorization_code
+        token: TokenResponse = self.server.generate_token(
+            grant_type=grant_type or self.GRANT_TYPE,
+            client=self.request.client,
+            user=user,
+            scope=scope,
+            expires_in=expires_in,
+            include_refresh_token=include_refresh_token,
+            resource=code.resource,  # the access token's `aud`
+        )
+        return token
 
     def delete_authorization_code(self, authorization_code: AuthorizationCode) -> None:
-        # Kept as a used row (one-time use is checked by `used_at`, and a replay is visible).
-        authorization_code.used_at = get_clock().now()
-        authorization_code.save(update_fields=["used_at"])
+        # Already marked used by create_token_response's claim; the row stays (replays show).
+        pass
 
     def authenticate_user(self, authorization_code: AuthorizationCode) -> User:
         user: User = authorization_code.user

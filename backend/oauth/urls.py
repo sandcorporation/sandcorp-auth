@@ -3,7 +3,7 @@
 from django.urls import path
 
 from oauth import views
-from oauth.server import AUTHORIZE_PATH, REGISTER_PATH
+from oauth.server import AUTHORIZE_PATH, REGISTER_PATH, TOKEN_PATH
 
 urlpatterns = [
     path(".well-known/jwks.json", views.jwks, name="jwks"),
@@ -14,4 +14,5 @@ urlpatterns = [
     ),
     path(REGISTER_PATH.lstrip("/"), views.register, name="register"),
     path(AUTHORIZE_PATH.lstrip("/"), views.authorize, name="authorize"),
+    path(TOKEN_PATH.lstrip("/"), views.token, name="token"),
 ]

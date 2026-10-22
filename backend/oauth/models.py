@@ -1,7 +1,8 @@
 from datetime import datetime
 
-from authlib.oauth2.rfc6749 import AuthorizationCodeMixin, ClientMixin
+from authlib.oauth2.rfc6749 import AuthorizationCodeMixin, ClientMixin, TokenMixin
 from django.conf import settings
+from django.contrib.auth.base_user import AbstractBaseUser
 from django.contrib.auth.hashers import check_password
 from django.db import models
 from django.db.models import Q
@@ -215,3 +216,77 @@ class AuthorizationCode(AuthorizationCodeMixin, models.Model):  # type: ignore[m
 
     def get_nonce(self) -> None:
         return None
+
+
+class RefreshTokenFamily(models.Model):
+    """The refresh tokens that descend from one consent. One live family per consent: the
+    first code exchange of a consent opens it, later exchanges add tokens to it. Revoking the
+    family (code reuse, refresh token reuse, consent revocation) kills every token in it."""
+
+    consent = models.ForeignKey(Consent, on_delete=models.CASCADE, related_name="families")
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="+")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    resource = models.ForeignKey(Resource, on_delete=models.CASCADE, related_name="+")
+    created_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_reason = models.CharField(max_length=40, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["consent"],
+                condition=Q(revoked_at__isnull=True),
+                name="oauth_refresh_family_single_live",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.client.name} → {self.resource.name} {self.created_at:%Y-%m-%d %H:%M:%S}"
+
+
+class RefreshToken(TokenMixin, models.Model):  # type: ignore[misc]  # authlib has no type stubs
+    """One refresh token (opaque; only its SHA-256 is stored). Lives `REFRESH_TOKEN_LIFETIME`.
+    Dead once revoked, replaced (`replaced_by`, set by rotation) or its family is revoked."""
+
+    family = models.ForeignKey(RefreshTokenFamily, on_delete=models.CASCADE, related_name="tokens")
+    token_hash = models.CharField(max_length=64, unique=True)
+    scope = models.CharField(max_length=1000)
+    # jti of the access token issued together with this refresh token.
+    jti = models.CharField(max_length=64, blank=True)
+    issued_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    replaced_by = models.OneToOneField(
+        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="replaces"
+    )
+
+    def __str__(self) -> str:
+        return f"{self.family} {self.issued_at:%Y-%m-%d %H:%M:%S}"
+
+    # authlib TokenMixin (times from get_clock(), not time.time())
+
+    def check_client(self, client: Client) -> bool:
+        return bool(self.family.client_id == client.pk)
+
+    def get_scope(self) -> str:
+        return self.scope
+
+    def get_expires_in(self) -> int:
+        return int((self.expires_at - self.issued_at).total_seconds())
+
+    def is_expired(self) -> bool:
+        return get_clock().now() >= self.expires_at
+
+    def is_revoked(self) -> bool:
+        return (
+            self.revoked_at is not None
+            or self.replaced_by_id is not None
+            or self.family.revoked_at is not None
+        )
+
+    def get_user(self) -> AbstractBaseUser:
+        user: AbstractBaseUser = self.family.user
+        return user
+
+    def get_client(self) -> Client:
+        return self.family.client
