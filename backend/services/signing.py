@@ -1,6 +1,6 @@
 """Signing keys: create, rotate, list, and publish (JWKS) the Ed25519 keys that sign tokens.
 
-Private keys are stored only as Fernet tokens under `settings.SIGNING_KEY_ENCRYPTION_KEY`.
+Private keys are stored only as Fernet tokens (`services.crypto`).
 """
 
 import base64
@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, TypedDict
 
-from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from django.conf import settings
@@ -18,6 +17,7 @@ from django.db.models import Q
 from adapters.clock import get_clock
 from adapters.randomness import get_randomness
 from oauth.models import SigningKey
+from services.crypto import decrypt_secret, encrypt_secret
 
 ALGORITHM = "EdDSA"
 
@@ -58,10 +58,6 @@ def random_token(n_bytes: int = 16) -> str:
     return b64url(get_randomness().token_bytes(n_bytes))
 
 
-def _fernet() -> Fernet:
-    return Fernet(settings.SIGNING_KEY_ENCRYPTION_KEY)
-
-
 def _new_key(now: datetime) -> SigningKey:
     seed = get_randomness().token_bytes(32)
     private_key = Ed25519PrivateKey.from_private_bytes(seed)
@@ -69,7 +65,7 @@ def _new_key(now: datetime) -> SigningKey:
     return SigningKey.objects.create(
         kid=random_token(),
         public_key=b64url(public_raw),
-        private_key_encrypted=_fernet().encrypt(seed),
+        private_key_encrypted=encrypt_secret(seed),
         created_at=now,
         active=True,
     )
@@ -101,7 +97,7 @@ def active_signing_key() -> ActiveKey:
     key = SigningKey.objects.filter(active=True).first()
     if key is None:
         raise NoActiveSigningKey("no active signing key; run `manage.py signing_keys create`")
-    seed = _fernet().decrypt(bytes(key.private_key_encrypted))
+    seed = decrypt_secret(bytes(key.private_key_encrypted))
     return ActiveKey(kid=key.kid, private_key=Ed25519PrivateKey.from_private_bytes(seed))
 
 

@@ -1,0 +1,8 @@
+{% extends "accounts/base.html" %}
+{% block title %}로그인됨{% endblock %}
+{% block content %}
+<h1>로그인됨</h1>
+<p class="lead">{{ user.get_username }} 계정으로 로그인되어 있습니다.</p>
+<p><a href="{{ admin_path }}">관리 화면으로</a></p>
+<form method="post" action="/logout">{% csrf_token %}<button type="submit">로그아웃</button></form>
+{% endblock %}
