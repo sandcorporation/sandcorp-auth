@@ -111,6 +111,21 @@ def test_full_login_lifecycle(client: Client, owner: User, frozen_clock: FrozenC
     assert response.status_code == 302 and "login" in response["Location"]
 
 
+def test_session_lasts_seven_days_without_sliding(
+    logged_in_client: Client, frozen_clock: FrozenClock
+) -> None:
+    assert settings.SESSION_COOKIE_AGE == 7 * 24 * 60 * 60
+    cookie = logged_in_client.cookies[settings.SESSION_COOKIE_NAME]
+    # A persistent cookie (survives closing the browser), not a session cookie.
+    assert cookie["max-age"] == settings.SESSION_COOKIE_AGE
+
+    frozen_clock.advance(6 * 24 * 60 * 60)
+    assert logged_in_client.get(ADMIN).status_code == 200  # activity must not extend it
+    frozen_clock.advance(24 * 60 * 60 + 1)
+    response = logged_in_client.get(ADMIN)
+    assert response.status_code == 302 and "login" in response["Location"]
+
+
 def test_reset_totp_forces_enrollment_again(
     logged_in_client: Client, owner: User, frozen_clock: FrozenClock
 ) -> None:

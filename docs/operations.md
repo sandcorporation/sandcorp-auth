@@ -37,7 +37,7 @@ docker compose -p sandcorp-auth -f docker-compose.prod.yml -f docker-compose.ora
 | `DJANGO_ADMIN_PATH` | 필수(사실상) | Django admin 경로. 생략하면 `admin/` | 추측하기 어려운 값. `python3 -c 'import secrets; print(secrets.token_urlsafe(12))'` |
 | `SITE_URL` | 선택 | 서비스 절대 URL = 토큰 `iss`·메타데이터 `issuer`. 끝 `/` 없이 | `https://auth.sandcorp.co.kr`(기본값과 같음) |
 | `SIGNING_KEY_ENCRYPTION_KEY` | 필수 | DB의 서명 개인 키를 암호화하는 Fernet 키. 없으면 기동 실패. **잃으면 서명 키를 못 푼다**(5절) | `docker run --rm sandcorp-auth-web:latest python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`(이미지가 아직 없으면 `cryptography`가 깔린 아무 Python) |
-| `SESSION_AGE_SECONDS` | 선택 | 이 서비스의 로그인 세션 수명(초). 브라우저를 닫아도 끝난다 | 기본 `43200`(12시간) |
+| `SESSION_AGE_SECONDS` | 선택 | 이 서비스의 로그인 세션 수명(초). 로그인 시각부터 세며 활동해도 늘지 않고 브라우저를 닫아도 유지된다 | 기본 `604800`(7일) |
 | `TRUST_X_FORWARDED_FOR` | 선택 | 호출자 IP를 `X-Forwarded-For` 첫 값으로 볼지. 요청 제한·감사 로그의 IP가 여기서 나온다 | NPMplus 뒤라 `1`(기본). 직접 노출할 때만 `0` |
 | `DJANGO_LOG_LEVEL` | 선택 | 루트 로그 수준 | 기본 `INFO` |
 | `GUNICORN_WORKERS` | 선택 | gunicorn 워커 수 | 기본 `2`(web은 cpus 0.6, 512MB) |
@@ -288,7 +288,7 @@ docker exec sandcorp-auth-web-1 python manage.py dumpdata --natural-foreign --in
 
 ## 7. 알려진 제약
 
-- end-session(로그아웃 전파) 엔드포인트가 없다. 사이트 로그아웃은 사이트 세션만 끊는다. 이 서비스의 세션은 `/logout`(로그인 후 첫 화면 버튼)이나 만료(12시간·브라우저 종료)로 끝난다.
+- end-session(로그아웃 전파) 엔드포인트가 없다. 사이트 로그아웃은 사이트 세션만 끊는다. 이 서비스의 세션은 `/logout`(로그인 후 첫 화면 버튼)이나 만료(로그인 후 7일)로 끝난다. 비밀번호 변경·TOTP 재설정도 열린 세션을 끝낸다.
 - 계정은 대표 한 명뿐이다(`owner create`는 두 번 되지 않는다). OIDC 클레임은 `sub`·`name`·`preferred_username`·`email`·`email_verified`뿐이고 그룹·권한 클레임은 없다.
 - DCR은 IP당 10회/시간, 토큰 엔드포인트(`/token`·`/revoke`)는 IP당 60회/분, 로그인은 IP당 실패 5회/15분이면 15분 차단, 계정 실패는 최대 60초 백오프.
 - 액세스 토큰은 폐기할 수 없다(JWT, 10분 만료). 폐기는 리프레시 토큰·패밀리·동의 단위다.
