@@ -20,7 +20,13 @@ class Migration(migrations.Migration):
                         auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
                     ),
                 ),
-                ("client_id", models.CharField(max_length=2048, unique=True)),
+                (
+                    "client_id",
+                    # Edited for MySQL (#30): the schema is built from empty there, and a utf8mb4
+                    # varchar(2048) unique index fails (1071, 3072-byte limit) before any later
+                    # migration could alter it.
+                    models.CharField(max_length=2048, unique=True, db_collation="ascii_bin"),
+                ),
                 ("name", models.CharField(max_length=200)),
                 ("redirect_uris", models.JSONField(default=list)),
                 (

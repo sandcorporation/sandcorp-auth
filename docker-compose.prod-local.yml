@@ -1,0 +1,32 @@
+# `make prod-local` only: a local MySQL standing in for OCI HeatWave, layered on docker-compose.prod.yml
+# (project sandcorp-auth-local). Never used on oracle. .env's DB_PASSWORD becomes the app user's
+# password here; DB_HOST/DB_PORT are pointed at this container.
+services:
+  web:
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:26.10.0
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_as_cs
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      MYSQL_DATABASE: ${DB_NAME:-sandcorp_auth}
+      MYSQL_USER: ${DB_USER:-sandcorp_auth}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+    volumes:
+      - mysqldata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -u\"$$MYSQL_USER\" -p\"$$MYSQL_PASSWORD\" -e 'SELECT 1' \"$$MYSQL_DATABASE\""]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+volumes:
+  mysqldata:

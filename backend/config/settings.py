@@ -68,18 +68,27 @@ TEMPLATES = [
     },
 ]
 
+# MySQL (OCI HeatWave in production, `make db` locally; ADR 0002). Django's MySQL backend opens
+# sessions at READ COMMITTED: keep it — REPEATABLE READ's gap locks deadlock the "lock a row that
+# may not exist yet" paths (signing key create, throttle counters).
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": env("POSTGRES_DB", "sandcorp_auth"),
-        "USER": env("POSTGRES_USER", "sandcorp_auth"),
-        "PASSWORD": env("POSTGRES_PASSWORD", "sandcorp_auth"),
-        "HOST": env("POSTGRES_HOST", "127.0.0.1"),
-        "PORT": env("POSTGRES_PORT", "15444"),
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": env("DB_NAME", "sandcorp_auth"),
+        "USER": env("DB_USER", "sandcorp_auth"),
+        "PASSWORD": env("DB_PASSWORD", "sandcorp_auth"),
+        "HOST": env("DB_HOST", "127.0.0.1"),
+        "PORT": env("DB_PORT", "3306"),
         "CONN_MAX_AGE": 60,
         "CONN_HEALTH_CHECKS": True,
+        "OPTIONS": {"charset": "utf8mb4"},
+        "TEST": {"CHARSET": "utf8mb4", "COLLATION": "utf8mb4_0900_as_cs"},
     }
 }
+
+# W003: unique CharField over 255 chars. The one such field, Client.client_id (2048), is an
+# ascii_bin column (2048 bytes), inside the 3072-byte index limit.
+SILENCED_SYSTEM_CHECKS = ["mysql.W003"]
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

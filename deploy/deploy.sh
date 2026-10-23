@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Called by Jenkins on the oracle agent from the job workspace, which holds ./.env (not in the repo).
-#   1) build the image  2) make sure postgres is up  3) migrate in a one-off container
-#   4) replace web      5) wait for the health check (it round-trips to Postgres)
+#   1) build the image  2) wait until the database answers  3) migrate in a one-off container
+#   4) replace web      5) wait for the health check (it round-trips to the database)
+# The database is OCI MySQL HeatWave (DB_* in .env), outside compose. `make prod-local` adds a local
+# `mysql` service (docker-compose.prod-local.yml); it is started first when present.
 # Migrations run while the old web still serves, so destructive schema changes take two deploys.
 set -euo pipefail
 
@@ -32,9 +34,20 @@ wait_healthy() {
 echo "== 이미지 빌드"
 compose build web
 
-echo "== Postgres (이미 떠 있으면 그대로)"
-compose up -d --no-recreate postgres
-wait_healthy postgres
+if compose config --services | grep -qx mysql; then
+  echo "== 로컬 MySQL (prod-local 전용, 이미 떠 있으면 그대로)"
+  compose up -d --no-recreate mysql
+  wait_healthy mysql
+fi
+
+echo "== DB 접속 대기"
+# MySQL DDL is not transactional: never start migrate against a database that is not answering.
+compose run --rm --no-deps web sh -c '
+  for i in $(seq 1 30); do
+    python manage.py check --database default >/dev/null 2>&1 && { echo "DB 응답 (${i}회째)"; exit 0; }
+    sleep 2
+  done
+  python manage.py check --database default'
 
 echo "== migrate"
 compose run --rm --no-deps web python manage.py migrate --noinput
