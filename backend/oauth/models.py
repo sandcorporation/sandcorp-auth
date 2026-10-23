@@ -149,7 +149,8 @@ class Consent(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="consents")
     resource = models.ForeignKey(Resource, on_delete=models.CASCADE, related_name="consents")
-    # Sorted scope names (all of `resource`'s scopes).
+    # Sorted scope names: `resource`'s scopes, plus login info scopes (openid, profile, email;
+    # services.oidc) when they were asked for together with a resource.
     scopes = models.JSONField(default=list)
     granted_at = models.DateTimeField()
     revoked_at = models.DateTimeField(null=True, blank=True)
@@ -186,6 +187,8 @@ class AuthorizationCode(AuthorizationCodeMixin, models.Model):  # type: ignore[m
     scope = models.CharField(max_length=1000)
     code_challenge = models.CharField(max_length=128)
     code_challenge_method = models.CharField(max_length=8)
+    # OpenID Connect `nonce` from the authorization request, copied into the ID token.
+    nonce = models.CharField(max_length=255, blank=True, default="")
     # When the owner last logged in (password + TOTP) before the code was issued.
     auth_time = models.DateTimeField()
     created_at = models.DateTimeField()
@@ -214,8 +217,8 @@ class AuthorizationCode(AuthorizationCodeMixin, models.Model):  # type: ignore[m
     def get_auth_time(self) -> int:
         return int(self.auth_time.timestamp())
 
-    def get_nonce(self) -> None:
-        return None
+    def get_nonce(self) -> str | None:
+        return self.nonce or None
 
 
 class RefreshTokenFamily(models.Model):
@@ -253,6 +256,9 @@ class RefreshToken(TokenMixin, models.Model):  # type: ignore[misc]  # authlib h
     scope = models.CharField(max_length=1000)
     # jti of the access token issued together with this refresh token.
     jti = models.CharField(max_length=64, blank=True)
+    # The owner's login time behind the code this token descends from (the ID token's
+    # `auth_time` on refresh). Null for tokens issued before OpenID Connect was added.
+    auth_time = models.DateTimeField(null=True, blank=True)
     issued_at = models.DateTimeField()
     expires_at = models.DateTimeField()
     revoked_at = models.DateTimeField(null=True, blank=True)

@@ -35,6 +35,8 @@ portfolio(`https://sandcorp.co.kr`)와 뉴스(`https://news.sandcorp.co.kr`)가 
 | `https://news.sandcorp.co.kr/mcp` | `editor` | 뉴스 편집자 권한(기사 작성·수정) |
 | `https://news.sandcorp.co.kr/mcp` | `login` | 뉴스 관리 화면 로그인 |
 
+OIDC 로그인 정보 스코프(`openid`·`profile`·`email`)는 리소스 스코프가 아니다. 사이트 토큰의 `aud`·`scope`에는 나타나지 않으므로(그 스코프만 요청한 토큰의 `aud`는 내부 리소스 `https://auth.sandcorp.co.kr/userinfo`) 이 규칙은 그대로다.
+
 엔드포인트마다 필요한 스코프 **하나**를 정한다. 관리 화면 로그인 콜백은 `login`을 요구한다.
 
 ## 2. 토큰 모양

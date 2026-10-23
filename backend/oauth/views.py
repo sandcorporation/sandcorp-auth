@@ -5,6 +5,7 @@ from authlib.oauth2 import OAuth2Error
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.csrf import csrf_exempt
@@ -13,10 +14,16 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from adapters.clock import get_clock
 from core.http import client_ip
 from oauth.grants import SandcorpAuthorizationCodeGrant, live_consent
-from oauth.models import Client, Consent
+from oauth.models import Client, Consent, Scope
 from oauth.server import SandcorpRevocationEndpoint, authorization_server_metadata, server
 from services import audit, throttle
 from services.consents import revoke_consent
+from services.oidc import (
+    USERINFO_RESOURCE,
+    UserinfoTokenRejected,
+    identity_claims,
+    verify_userinfo_token,
+)
 from services.signing import published_jwks
 
 
@@ -31,6 +38,34 @@ def jwks(request: HttpRequest) -> JsonResponse:
 def authorization_server_metadata_view(request: HttpRequest) -> JsonResponse:
     response = JsonResponse(authorization_server_metadata())
     response["Cache-Control"] = "public, max-age=3600"
+    return response
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def userinfo(request: HttpRequest) -> HttpResponse:
+    """OpenID Connect UserInfo (Core 5.3): the owner's claims for the scopes of a bearer access
+    token issued for the login info resource. Any other token gets 401 (RFC 6750 3.1)."""
+    scheme, _, raw = request.headers.get("Authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not raw.strip():
+        return _bearer_challenge(None)
+    try:
+        grant = verify_userinfo_token(raw.strip())
+    except UserinfoTokenRejected:
+        return _bearer_challenge("invalid_token")
+    response = JsonResponse(dict(identity_claims(grant.user, grant.scopes)))
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+def _bearer_challenge(error: str | None) -> HttpResponse:
+    realm = urlsplit(settings.SITE_URL).hostname or "sandcorp-auth"
+    challenge = f'Bearer realm="{realm}"'
+    if error is not None:
+        challenge += f', error="{error}"'
+    response = JsonResponse({"error": error or "invalid_request"}, status=401)
+    response["WWW-Authenticate"] = challenge
+    response["Cache-Control"] = "no-store"
     return response
 
 
@@ -180,8 +215,12 @@ def _consent_screen(
 ) -> HttpResponse:
     client: Client = grant.request.client
     granted = set(consent.scopes) if consent is not None else set()
+    # Login info scopes asked for with another resource are described by their own resource.
     descriptions = dict(
-        grant.resource.scopes.filter(name__in=grant.scopes).values_list("name", "description")
+        Scope.objects.filter(
+            Q(resource=grant.resource) | Q(resource__url=USERINFO_RESOURCE),
+            name__in=grant.scopes,
+        ).values_list("name", "description")
     )
     scopes = [
         {"name": name, "description": descriptions[name], "granted": name in granted}

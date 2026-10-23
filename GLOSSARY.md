@@ -17,6 +17,14 @@ _Avoid_: OTP 기기, 2FA 장치
 **공개 클라이언트**는 시크릿이 없고(`token_endpoint_auth_method=none`) CIMD·DCR로 등록된다. **기밀 클라이언트**는 사이트의 관리 화면 로그인용으로, 대표가 관리 명령(`clients create-confidential`)이나 admin으로만 등록하며 `/token`에서 시크릿(`client_secret_basic`·`client_secret_post`)으로 자신을 증명한다. 시크릿은 발급 때 한 번만 보이고 해시만 남는다. 둘 다 PKCE가 필수다.
 _Avoid_: 앱, 커넥터
 
+**로그인 정보 스코프(OpenID scope)**:
+`openid`·`profile`·`email`. 리소스의 권한이 아니라 「대표가 누구인지(이름·이메일)」를 클라이언트에 알려 줘도 된다는 허락이다. 기밀 클라이언트만 요청한다. `resource` 없이 요청하면 그랜트가 내부 리소스 `https://auth.sandcorp.co.kr/userinfo`에 묶이고, 그 액세스 토큰은 `/userinfo`에서만 쓰인다.
+_Avoid_: OIDC 권한, 프로필 스코프
+
+**ID 토큰(ID token)**:
+`openid`를 허락받은 클라이언트에 `/token`이 액세스 토큰과 함께 주는 서명된 JWT. 「누가 언제 로그인했나」를 말하며 `aud`는 `client_id`다. 리소스에 접근하는 데 쓰지 않는다(그건 액세스 토큰).
+_Avoid_: 로그인 토큰, 신원 토큰
+
 **클라이언트 ID 메타데이터 문서(Client ID Metadata Document, CIMD)**:
 클라이언트가 자기 `client_id`로 쓰는 https URL(경로 포함)에 올려 둔 JSON 문서. 이름·리다이렉트 URI를 담고, 문서의 `client_id`는 그 URL과 정확히 같아야 한다. 이 서비스는 처음 보는 URL `client_id`를 받으면 문서를 가져와 검증하고 클라이언트 표에 캐시(기본 1시간, `Cache-Control: max-age`를 따르되 최대 24시간)한다. 클라이언트 등록의 1순위이며, Dynamic Client Registration(DCR)은 호환용이다. 어느 쪽이든 등록만으로는 아무 권한도 없다.
 _Avoid_: 클라이언트 매니페스트, 원격 등록

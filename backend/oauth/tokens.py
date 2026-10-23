@@ -4,15 +4,19 @@
 `aud` = the resource bound to the grant (RFC 8707, which authlib's generators cannot carry, so
 the server passes `resource` explicitly), the refresh token is an opaque random value. Refresh
 tokens are stored as SHA-256 hashes in the live family of the consent they descend from.
+With the `openid` scope the response also carries an OpenID Connect ID token
+(`services.oidc`); the access token then keeps only its resource's own scopes.
 """
 
 import hashlib
+from datetime import datetime
 from typing import NotRequired, TypedDict
 
 import jwt
 from authlib.oauth2.rfc6750 import BearerTokenGenerator
 from django.conf import settings
 from django.contrib.auth.base_user import AbstractBaseUser
+from django.contrib.auth.models import User
 
 from adapters.clock import get_clock
 from oauth.models import (
@@ -24,6 +28,7 @@ from oauth.models import (
     Resource,
 )
 from services import audit
+from services.oidc import OPENID, issue_id_token
 from services.signing import random_token
 from services.tokens import issue_access_token
 
@@ -31,13 +36,14 @@ REFRESH_TOKEN_BYTES = 32
 
 
 class TokenResponse(TypedDict):
-    """RFC 6749 5.1 fields, and nothing else."""
+    """RFC 6749 5.1 fields, plus `id_token` (OpenID Connect Core 3.1.3.3) with `openid`."""
 
     access_token: str
     token_type: str
     expires_in: int
     scope: str
     refresh_token: NotRequired[str]
+    id_token: NotRequired[str]
 
 
 def hash_refresh_token(raw: str) -> str:
@@ -73,16 +79,22 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
         include_refresh_token: bool = True,
         *,
         resource: Resource | None = None,
+        auth_time: datetime | None = None,
+        nonce: str | None = None,
     ) -> TokenResponse:
-        if user is None or resource is None:
+        """`auth_time` (the owner's login) and `nonce` go into the ID token, which is made
+        only when the scope has `openid`."""
+        if not isinstance(user, User) or resource is None:
             raise RuntimeError("an access token needs an owner and a resource (its audience)")
         allowed: str = self.get_allowed_scope(client, scope)
+        granted = allowed.split()
+        own = set(resource.scopes.filter(name__in=granted).values_list("name", flat=True))
         token = TokenResponse(
             access_token=issue_access_token(
                 sub=user.get_username(),
                 audience=resource.url,
                 client_id=client.client_id,
-                scopes=allowed.split(),
+                scopes=[name for name in granted if name in own],
             ),
             token_type="Bearer",
             expires_in=int(settings.ACCESS_TOKEN_LIFETIME.total_seconds()),
@@ -90,6 +102,16 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
         )
         if include_refresh_token:
             token["refresh_token"] = random_token(REFRESH_TOKEN_BYTES)
+        if OPENID in granted:
+            if auth_time is None:
+                raise RuntimeError("an ID token needs the owner's login time")
+            token["id_token"] = issue_id_token(
+                user=user,
+                client_id=client.client_id,
+                scopes=granted,
+                auth_time=auth_time,
+                nonce=nonce,
+            )
         return token
 
 
@@ -109,7 +131,11 @@ def live_family(consent: Consent) -> RefreshTokenFamily:
 
 
 def store_refresh_token(
-    family: RefreshTokenFamily, raw: str, scope: str, jti: str = ""
+    family: RefreshTokenFamily,
+    raw: str,
+    scope: str,
+    jti: str = "",
+    auth_time: datetime | None = None,
 ) -> RefreshToken:
     now = get_clock().now()
     return RefreshToken.objects.create(
@@ -117,6 +143,7 @@ def store_refresh_token(
         token_hash=hash_refresh_token(raw),
         scope=scope,
         jti=jti,
+        auth_time=auth_time,
         issued_at=now,
         expires_at=now + settings.REFRESH_TOKEN_LIFETIME,
     )

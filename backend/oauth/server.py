@@ -11,6 +11,7 @@ registered with `server.register_grant(...)` / `server.register_endpoint(...)` a
 this module.
 """
 
+from datetime import datetime
 from typing import Final
 
 from authlib.integrations.django_oauth2 import AuthorizationServer, RevocationEndpoint
@@ -21,7 +22,7 @@ from authlib.oauth2.rfc7591 import (
     InvalidClientMetadataError,
     InvalidRedirectURIError,
 )
-from authlib.oauth2.rfc8414 import AuthorizationServerMetadata
+from authlib.oidc.discovery import OpenIDProviderMetadata
 from django.conf import settings
 from django.contrib.auth.base_user import AbstractBaseUser
 
@@ -44,8 +45,9 @@ from oauth.tokens import (
 )
 from services import audit
 from services.clients import find_client
+from services.oidc import CLAIMS_SUPPORTED
 from services.redirect_uris import ALLOWED_GRANT_TYPES, valid_redirect_uri
-from services.signing import random_token
+from services.signing import ALGORITHM, random_token
 
 type JSON = str | int | float | bool | None | list[JSON] | dict[str, JSON]
 
@@ -55,12 +57,25 @@ TOKEN_PATH: Final = "/token"
 REGISTER_PATH: Final = "/register"
 REVOKE_PATH: Final = "/revoke"
 JWKS_PATH: Final = "/.well-known/jwks.json"
+USERINFO_PATH: Final = "/userinfo"
 
 CLIENT_AUTH_METHODS: Final = ["none", "client_secret_basic", "client_secret_post"]
 
 
+class ProviderMetadata(OpenIDProviderMetadata):  # type: ignore[misc]  # no stubs
+    """OpenID Provider metadata checks, except that RS256 is not demanded: ID tokens are
+    EdDSA only, signed with the same Ed25519 keys as access tokens (docs/adr/0001)."""
+
+    def validate_id_token_signing_alg_values_supported(self) -> None:
+        values = self.get("id_token_signing_alg_values_supported")
+        if not isinstance(values, list) or not values:
+            raise ValueError('"id_token_signing_alg_values_supported" MUST be a JSON array')
+
+
 def authorization_server_metadata() -> dict[str, JSON]:
-    """RFC 8414 metadata, validated with authlib's model before it is served."""
+    """The one metadata document, served both as RFC 8414 (`oauth-authorization-server`) and
+    as OpenID Connect Discovery (`openid-configuration`) so the two never disagree; validated
+    with authlib's OpenID Provider model (a superset of RFC 8414) before it is served."""
     site = settings.SITE_URL
     scope_names = sorted(set(Scope.objects.values_list("name", flat=True)))
     metadata: dict[str, JSON] = {
@@ -70,7 +85,11 @@ def authorization_server_metadata() -> dict[str, JSON]:
         "registration_endpoint": site + REGISTER_PATH,
         "revocation_endpoint": site + REVOKE_PATH,
         "jwks_uri": site + JWKS_PATH,
+        "userinfo_endpoint": site + USERINFO_PATH,
         "response_types_supported": ["code"],
+        "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": [ALGORITHM],
+        "claims_supported": list(CLAIMS_SUPPORTED),
         "grant_types_supported": list(ALLOWED_GRANT_TYPES),
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": list(CLIENT_AUTH_METHODS),
@@ -78,7 +97,7 @@ def authorization_server_metadata() -> dict[str, JSON]:
         "scopes_supported": list(scope_names),
         "client_id_metadata_document_supported": True,
     }
-    AuthorizationServerMetadata(metadata).validate()
+    ProviderMetadata(metadata).validate()
     return metadata
 
 
@@ -103,8 +122,11 @@ class SandcorpAuthorizationServer(AuthorizationServer):  # type: ignore[misc]  #
         include_refresh_token: bool = True,
         *,
         resource: Resource | None = None,
+        auth_time: datetime | None = None,
+        nonce: str | None = None,
     ) -> TokenResponse:
-        """authlib's signature plus `resource`, the access token's audience (RFC 8707)."""
+        """authlib's signature plus `resource`, the access token's audience (RFC 8707), and
+        the ID token's `auth_time` and `nonce` (used only with the `openid` scope)."""
         return self.token_generator.generate(
             grant_type,
             client,
@@ -113,6 +135,8 @@ class SandcorpAuthorizationServer(AuthorizationServer):  # type: ignore[misc]  #
             expires_in=expires_in,
             include_refresh_token=include_refresh_token,
             resource=resource,
+            auth_time=auth_time,
+            nonce=nonce,
         )
 
     def save_token(self, token: TokenResponse, request: OAuth2Request) -> RefreshToken | None:
@@ -125,15 +149,19 @@ class SandcorpAuthorizationServer(AuthorizationServer):  # type: ignore[misc]  #
             family = presented.family
             kind = audit.TOKEN_REFRESHED
             refresh_scope = presented.scope
+            auth_time = presented.auth_time
         else:
             code: AuthorizationCode = request.authorization_code
             family = live_family(code.consent)
             kind = audit.TOKEN_ISSUED
             refresh_scope = token["scope"]
+            auth_time = code.auth_time
         jti = access_token_jti(token["access_token"])
         stored = None
         if "refresh_token" in token:
-            stored = store_refresh_token(family, token["refresh_token"], refresh_scope, jti)
+            stored = store_refresh_token(
+                family, token["refresh_token"], refresh_scope, jti, auth_time
+            )
         client: Client = request.client
         audit.record(
             kind,

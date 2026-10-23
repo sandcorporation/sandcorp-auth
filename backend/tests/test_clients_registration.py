@@ -16,7 +16,8 @@ pytestmark = pytest.mark.django_db
 SITE = "https://auth.sandcorp.co.kr"
 
 
-def test_initial_data_has_the_five_documented_scopes() -> None:
+def test_initial_data_has_the_documented_scopes() -> None:
+    """The five resource scopes, and the login info scopes of the internal resource."""
     scopes = {(s.resource.url, s.name) for s in Scope.objects.select_related("resource")}
     assert scopes == {
         ("https://sandcorp.co.kr/mcp", "admin"),
@@ -24,6 +25,9 @@ def test_initial_data_has_the_five_documented_scopes() -> None:
         ("https://news.sandcorp.co.kr/mcp", "admin"),
         ("https://news.sandcorp.co.kr/mcp", "editor"),
         ("https://news.sandcorp.co.kr/mcp", "login"),
+        ("https://auth.sandcorp.co.kr/userinfo", "openid"),
+        ("https://auth.sandcorp.co.kr/userinfo", "profile"),
+        ("https://auth.sandcorp.co.kr/userinfo", "email"),
     }
     assert all(s.description for s in Scope.objects.all())
 
@@ -41,7 +45,23 @@ def test_metadata_declares_endpoints_features_and_cimd(client: Client) -> None:
         "registration_endpoint": f"{SITE}/register",
         "revocation_endpoint": f"{SITE}/revoke",
         "jwks_uri": f"{SITE}/.well-known/jwks.json",
+        "userinfo_endpoint": f"{SITE}/userinfo",
         "response_types_supported": ["code"],
+        "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": ["EdDSA"],
+        "claims_supported": [
+            "iss",
+            "sub",
+            "aud",
+            "exp",
+            "iat",
+            "auth_time",
+            "nonce",
+            "name",
+            "preferred_username",
+            "email",
+            "email_verified",
+        ],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": [
@@ -54,7 +74,7 @@ def test_metadata_declares_endpoints_features_and_cimd(client: Client) -> None:
             "client_secret_basic",
             "client_secret_post",
         ],
-        "scopes_supported": ["admin", "editor", "login"],
+        "scopes_supported": ["admin", "editor", "email", "login", "openid", "profile"],
         "client_id_metadata_document_supported": True,
     }
     AuthorizationServerMetadata(metadata).validate()
@@ -67,7 +87,15 @@ def test_scopes_supported_follows_the_database(client: Client) -> None:
         description="읽기",
     )
     metadata = client.get("/.well-known/oauth-authorization-server").json()
-    assert metadata["scopes_supported"] == ["admin", "editor", "login", "reader"]
+    assert metadata["scopes_supported"] == [
+        "admin",
+        "editor",
+        "email",
+        "login",
+        "openid",
+        "profile",
+        "reader",
+    ]
 
 
 def test_dcr_registers_a_public_client_that_admin_lists(
