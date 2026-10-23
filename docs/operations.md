@@ -128,6 +128,7 @@ compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운�
 | 리다이렉트 URI 고치기 | admin 클라이언트 변경 화면의 `redirect_uris`(JSON 목록) | 기밀은 https만, 공개는 https 또는 `localhost`·`127.0.0.1`의 http. 정확히 일치 비교라 끝 슬래시도 값이다 |
 | 동의 폐기 | admin → 동의(`/<admin>/oauth/consent/`) → action 「선택한 동의 폐기(리프레시 토큰 패밀리도 폐기)」 | 다음 인가 때 동의 화면이 다시 뜬다 |
 | 리프레시 토큰 패밀리 폐기 | admin → 리프레시 토큰 패밀리(`/<admin>/oauth/refreshtokenfamily/`) → action 「선택한 패밀리 폐기」 | 그 패밀리의 리프레시 토큰이 모두 무효. 이미 나간 액세스 토큰은 만료(10분)까지 산다 |
+| 대표 이메일·이름(OIDC) | `manage owner set-email --email <주소>` · `manage owner set-name --name <이름>` | ID 토큰·userinfo의 `email`(+`email_verified`)·`name`. 비우면 클레임이 빠진다. oauth2-proxy는 email이 없으면 로그인을 막으므로 forward auth 전에 넣는다 |
 | 자원·스코프 추가 | admin → 자원(`/<admin>/oauth/resource/`) | 스코프는 자원 변경 화면 아래 인라인 |
 
 `<admin>`은 `DJANGO_ADMIN_PATH` 값. admin은 이 서비스 로그인(비밀번호 + TOTP)을 거친다.
@@ -194,6 +195,55 @@ NPMplus 프록시 호스트:
 - 앱이 보내는 보안 헤더(DEBUG 아님): `Strict-Transport-Security: max-age=31536000`(https 요청에만, 서브도메인 미포함·preload 없음 — `sandcorp.co.kr`의 다른 서브도메인에 영향을 주지 않으려고), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`. 세션·CSRF 쿠키는 `Secure`, `SameSite=Lax`(사이트에서 `/authorize`로 넘어오는 최상위 이동에 세션 쿠키가 실려야 하므로 Strict가 아니다).
 - `python manage.py check --deploy`(운영 설정)는 의도한 경고 셋만 남긴다: `security.W005`(HSTS 서브도메인 미포함), `security.W008`(`SECURE_SSL_REDIRECT` 꺼짐 — NPMplus 몫), `security.W021`(HSTS preload 안 함).
 
+### forward auth(oauth2-proxy)
+
+sandcorp-auth는 OpenID Connect 제공자이기도 하다(discovery `/.well-known/openid-configuration`, `openid`·`profile`·`email`, ID 토큰 EdDSA, `/userinfo`; 결정은 `docs/adr/0001-oidc-layer-for-forward-auth.md`). NPMplus 호스트를 대표만 보게 하려면 oauth2-proxy를 forward auth 업스트림으로 둔다. 보호할 호스트마다 아래를 한 번씩 한다(예: `app.sandcorp.co.kr`).
+
+1. 대표 이메일이 있어야 한다: `manage owner set-email --email <주소>`.
+2. 기밀 클라이언트를 만든다. 출력의 `client_id`·`client_secret`을 바로 oauth2-proxy env에 넣는다(시크릿은 한 번만 보인다).
+
+   ```bash
+   docker exec -it sandcorp-auth-web-1 python manage.py clients create-confidential \
+     --name "oauth2-proxy app.sandcorp.co.kr" \
+     --redirect-uri https://app.sandcorp.co.kr/oauth2/callback
+   ```
+
+3. oracle에서 oauth2-proxy를 host network의 `127.0.0.1:3000`에 띄운다(compose 조각, 이미지 태그는 고정):
+
+   ```yaml
+   services:
+     oauth2-proxy:
+       image: quay.io/oauth2-proxy/oauth2-proxy:v7.12.0
+       network_mode: host
+       restart: unless-stopped
+       environment:
+         OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID}
+         OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET}
+         OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}  # python -c 'import secrets;print(secrets.token_hex(16))'
+       command:
+         - --http-address=127.0.0.1:3000
+         - --provider=oidc
+         - --oidc-issuer-url=https://auth.sandcorp.co.kr
+         - --scope=openid profile email
+         - --code-challenge-method=S256
+         - --redirect-url=https://app.sandcorp.co.kr/oauth2/callback
+         - --cookie-domain=app.sandcorp.co.kr
+         - --whitelist-domain=app.sandcorp.co.kr
+         - --cookie-secure=true
+         - --cookie-refresh=5m        # 액세스·ID 토큰 수명(10분)보다 짧게: 리프레시 토큰으로 세션을 잇는다
+         - --reverse-proxy
+         - --set-xauthrequest
+         - --email-domain=*
+         - --skip-provider-button
+         - --upstream=static://202
+   ```
+
+   `--insecure-oidc-*` 플래그는 필요 없다(issuer가 https이고 ID 토큰에 `email_verified=true`가 있다).
+4. NPMplus의 그 프록시 호스트에서 인증 업스트림(`AUTH_REQUEST_VOIDAUTH_UPSTREAM`)을 oauth2-proxy `http://127.0.0.1:3000`으로 고른다. oauth2-proxy 쪽 동작: `GET /oauth2/auth`가 202면 통과, 401이면 로그인(`/oauth2/start?rd=<원래 URL>`)으로 보내야 하고, `/oauth2/` 경로(콜백 포함)는 oauth2-proxy가 받아야 한다 — NPMplus가 이 둘을 해 주는지 첫 설정 때 확인한다. 통과한 요청에는 `X-Auth-Request-User`(대표 username)·`X-Auth-Request-Email`·`X-Auth-Request-Preferred-Username`이 붙는다.
+5. 처음 들어가면 sandcorp-auth 로그인(비밀번호+TOTP) 뒤 동의 화면에 「로그인 정보(이름·이메일) 제공」이 뜬다. 허락하면 이후에는 묻지 않는다(동의는 admin 「동의」에서 폐기).
+
+로컬에서 해 보려면: `make dev-backend` 대신 `SITE_URL=http://172.17.0.1:8000 DJANGO_ALLOWED_HOSTS=172.17.0.1,localhost AUTHLIB_INSECURE_TRANSPORT=1 DJANGO_DEBUG=1 uv run python manage.py runserver 0.0.0.0:8000`(컨테이너와 브라우저가 같은 issuer 주소를 보게), oauth2-proxy는 `--oidc-issuer-url=http://172.17.0.1:8000 --redirect-url=http://localhost:4180/oauth2/callback --cookie-secure=false -p 127.0.0.1:4180:4180`. 기밀 클라이언트는 https 리다이렉트만 받으므로 https로 만든 뒤 로컬 DB에서만 `redirect_uris`를 http로 고친다.
+
 ## 5. 백업
 
 | 무엇 | 어디 | 잃으면 |
@@ -235,7 +285,7 @@ docker exec sandcorp-auth-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POS
 ## 7. 알려진 제약
 
 - end-session(로그아웃 전파) 엔드포인트가 없다. 사이트 로그아웃은 사이트 세션만 끊는다. 이 서비스의 세션은 `/logout`(로그인 후 첫 화면 버튼)이나 만료(12시간·브라우저 종료)로 끝난다.
-- 계정은 대표 한 명뿐이다(`owner create`는 두 번 되지 않는다). userinfo 엔드포인트도 없다.
+- 계정은 대표 한 명뿐이다(`owner create`는 두 번 되지 않는다). OIDC 클레임은 `sub`·`name`·`preferred_username`·`email`·`email_verified`뿐이고 그룹·권한 클레임은 없다.
 - DCR은 IP당 10회/시간, 토큰 엔드포인트(`/token`·`/revoke`)는 IP당 60회/분, 로그인은 IP당 실패 5회/15분이면 15분 차단, 계정 실패는 최대 60초 백오프.
 - 액세스 토큰은 폐기할 수 없다(JWT, 10분 만료). 폐기는 리프레시 토큰·패밀리·동의 단위다.
 
