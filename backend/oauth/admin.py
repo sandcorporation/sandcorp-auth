@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from django import forms
@@ -49,6 +50,14 @@ else:  # generic only in django-stubs
     _ClientAdmin = admin.ModelAdmin
     _ClientForm = forms.ModelForm
     _ScopeInline = admin.TabularInline
+
+
+def _ascii_safe(fields: Sequence[str], request: HttpRequest) -> list[str]:
+    """Drop `client_id` lookups from a non-ASCII search: the column is ascii_bin, and MySQL
+    refuses to compare it with a term it cannot convert (3854). No client_id matches it anyway."""
+    if request.GET.get("q", "").isascii():
+        return list(fields)
+    return [field for field in fields if not field.endswith("client_id")]
 
 
 class ScopeInline(_ScopeInline):
@@ -128,6 +137,10 @@ class ClientAdmin(_ClientAdmin):
     list_filter = ["registered_via", "kind", "active"]
     search_fields = ["name", "client_id"]
     ordering = ["-created_at"]
+
+    def get_search_fields(self, request: HttpRequest) -> list[str]:
+        return _ascii_safe(super().get_search_fields(request), request)
+
     readonly_fields = [
         "client_id",
         "kind",
@@ -258,6 +271,9 @@ class ConsentAdmin(ReadOnlyAdminMixin, _ConsentAdmin):
     list_select_related = ["client", "resource"]
     actions = ["revoke"]
 
+    def get_search_fields(self, request: HttpRequest) -> list[str]:
+        return _ascii_safe(super().get_search_fields(request), request)
+
     @admin.action(description="선택한 동의 폐기(리프레시 토큰 패밀리도 폐기)")
     def revoke(self, request: HttpRequest, queryset: QuerySet[Consent]) -> None:
         actor = request.user.get_username()
@@ -299,6 +315,9 @@ class RefreshTokenFamilyAdmin(ReadOnlyAdminMixin, _RefreshTokenFamilyAdmin):
     ordering = ["-created_at"]
     list_select_related = ["client", "resource"]
     actions = ["revoke"]
+
+    def get_search_fields(self, request: HttpRequest) -> list[str]:
+        return _ascii_safe(super().get_search_fields(request), request)
 
     @admin.action(description="선택한 패밀리 폐기")
     def revoke(self, request: HttpRequest, queryset: QuerySet[RefreshTokenFamily]) -> None:

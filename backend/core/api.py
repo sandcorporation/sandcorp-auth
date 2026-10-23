@@ -20,7 +20,7 @@ class Health(Schema):
 
 @api.get("/health", response={200: Health, 503: Health}, auth=None)
 def health(request: HttpRequest) -> Status[Health]:
-    """Liveness: a real Postgres round trip plus the server time; the deploy waits on this."""
+    """Liveness: a real database round trip plus the server time; the deploy waits on this."""
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")

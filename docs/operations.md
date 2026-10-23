@@ -4,8 +4,9 @@ auth.sandcorp.co.kr(sandcorp-auth)를 배포하고 운영하는 사람(조율자
 
 ## 0. 구성 한눈에
 
-- oracle 호스트에서 Jenkins가 main 푸시마다 `deploy/deploy.sh`를 돈다(`Jenkinsfile`): 이미지 빌드 → postgres 기동(떠 있으면 그대로) → `migrate` → web 교체 → 헬스 확인.
-- compose 프로젝트 이름 `sandcorp-auth`, 파일 `docker-compose.prod.yml` + `docker-compose.oracle.yml`, 서비스 `web`(gunicorn, :8000)·`postgres`(postgres 17, 볼륨 `pgdata`). 컨테이너 이름은 `sandcorp-auth-web-1`·`sandcorp-auth-postgres-1`.
+- oracle 호스트에서 Jenkins가 main 푸시마다 `deploy/deploy.sh`를 돈다(`Jenkinsfile`): 이미지 빌드 → DB 접속 대기(`manage.py check --database default`, 2초 간격 30번) → `migrate` → web 교체 → 헬스 확인.
+- compose 프로젝트 이름 `sandcorp-auth`, 파일 `docker-compose.prod.yml` + `docker-compose.oracle.yml`, 서비스 `web`(gunicorn, :8000) 하나. 컨테이너 이름은 `sandcorp-auth-web-1`.
+- DB는 compose 밖의 **OCI MySQL HeatWave**(MySQL 26.10, 같은 VCN의 사설 IP, 데이터베이스 `utf8mb4` / `utf8mb4_0900_as_cs`)다. web이 `.env`의 `DB_*`로 붙는다(ADR [0002](adr/0002-mysql-heatwave.md)). Postgres에서 옮길 때의 절차는 [`ops/db-migration.md`](ops/db-migration.md).
 - web은 docker 브리지 게이트웨이 `172.17.0.1:18093`에만 묶인다. 바깥은 NPMplus가 TLS를 끝내고 `https://auth.sandcorp.co.kr` → `http://172.17.0.1:18093`으로 넘긴다.
 - 비밀 값은 Jenkins 워크스페이스의 `.env`(oracle 호스트 `/var/jenkins_home/workspace/sandcorp-auth/.env`)에만 있다. 저장소에는 `.env.example`뿐이다.
 
@@ -40,12 +41,14 @@ docker compose -p sandcorp-auth -f docker-compose.prod.yml -f docker-compose.ora
 | `TRUST_X_FORWARDED_FOR` | 선택 | 호출자 IP를 `X-Forwarded-For` 첫 값으로 볼지. 요청 제한·감사 로그의 IP가 여기서 나온다 | NPMplus 뒤라 `1`(기본). 직접 노출할 때만 `0` |
 | `DJANGO_LOG_LEVEL` | 선택 | 루트 로그 수준 | 기본 `INFO` |
 | `GUNICORN_WORKERS` | 선택 | gunicorn 워커 수 | 기본 `2`(web은 cpus 0.6, 512MB) |
-| `POSTGRES_DB` | 선택 | DB 이름(postgres 서비스와 web이 같이 읽는다) | 기본 `sandcorp_auth` |
-| `POSTGRES_USER` | 선택 | DB 사용자 | 기본 `sandcorp_auth` |
-| `POSTGRES_PASSWORD` | 필수 | DB 비밀번호. 없으면 compose가 거부한다. **처음 볼륨을 만들 때 값으로 굳는다**(나중에 바꾸려면 DB 안에서 `ALTER USER`도 해야 한다) | `python3 -c 'import secrets; print(secrets.token_urlsafe(24))'` |
+| `DB_HOST` | 필수 | HeatWave 인스턴스의 사설 IP | OCI 콘솔의 DB 시스템 엔드포인트 |
+| `DB_PORT` | 선택 | MySQL 포트 | 기본 `3306` |
+| `DB_NAME` | 선택 | 데이터베이스 이름(`utf8mb4` / `utf8mb4_0900_as_cs`로 만든 것) | 기본 `sandcorp_auth` |
+| `DB_USER` | 선택 | 그 데이터베이스에 전체 권한을 가진 서비스 계정 | 기본 `sandcorp_auth` |
+| `DB_PASSWORD` | 필수 | 그 계정의 비밀번호 | HeatWave에서 계정을 만들 때 정한 값 |
 | `HTTP_BIND` / `HTTP_PORT` | 선택 | web을 묶을 호스트 주소·포트 | oracle 덮어쓰기 기본 `172.17.0.1` / `18093` |
 
-compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운영 `0` 고정), `POSTGRES_HOST`·`POSTGRES_PORT`(`postgres`/`5432`), `DJANGO_STATIC_ROOT`(이미지 기본값).
+compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운영 `0` 고정), `DJANGO_STATIC_ROOT`(이미지 기본값).
 
 **운영 `.env`에 넣지 않는 것**: `AUTHLIB_INSECURE_TRANSPORT`. http로 OAuth 요청을 받게 하는 스위치라 **로컬 확인 때만** 쓴다(8절).
 
@@ -248,14 +251,15 @@ sandcorp-auth는 OpenID Connect 제공자이기도 하다(discovery `/.well-know
 
 | 무엇 | 어디 | 잃으면 |
 | --- | --- | --- |
-| Postgres | 볼륨 `sandcorp-auth_pgdata` | 계정·TOTP·클라이언트·동의·리프레시 토큰·서명 키·감사 로그가 다 사라진다 |
+| MySQL | OCI HeatWave의 `sandcorp_auth` 데이터베이스 | 계정·TOTP·클라이언트·동의·리프레시 토큰·서명 키·감사 로그가 다 사라진다 |
 | `.env` | `/var/jenkins_home/workspace/sandcorp-auth/.env` | 특히 `SIGNING_KEY_ENCRYPTION_KEY` — 아래 |
 
-Postgres 덤프(oracle 호스트, 정기적으로; 결과 파일은 호스트 밖에 보관):
+DB 백업은 HeatWave 관리형 자동 백업(OCI 콘솔의 DB 시스템 → 백업)에 맡긴다. 손으로 한 벌 더 뜨려면(oracle 호스트, 결과 파일은 호스트 밖에 보관) Django 덤프를 쓴다 — 서명 키(BLOB)도 base64로 들어간다:
 
 ```sh
-docker exec sandcorp-auth-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > sandcorp-auth-$(date +%F).dump
-# 복원: docker exec -i sandcorp-auth-postgres-1 sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < sandcorp-auth-YYYY-MM-DD.dump
+docker exec sandcorp-auth-web-1 python manage.py dumpdata --natural-foreign --indent 0 \
+  -e contenttypes -e auth.permission -e sessions -e admin.logentry > sandcorp-auth-$(date +%F).json
+# 복원: 빈 DB에 migrate → loaddata (절차는 ops/db-migration.md 3절)
 ```
 
 `.env`는 비밀 보관소(비밀번호 관리자 등)에 통째로 둔다. DB 덤프와 `.env`를 같은 곳에 두지 않는다(덤프 안의 서명 키는 이 키로만 풀린다).
@@ -299,9 +303,9 @@ cp .env.example .env
 #          DJANGO_CSRF_TRUSTED_ORIGINS=http://127.0.0.1:18093
 #          SITE_URL=http://127.0.0.1:18093
 #          TRUST_X_FORWARDED_FOR=0
-#          SIGNING_KEY_ENCRYPTION_KEY=<새 Fernet 키>, DJANGO_SECRET_KEY·POSTGRES_PASSWORD 아무 값
+#          SIGNING_KEY_ENCRYPTION_KEY=<새 Fernet 키>, DJANGO_SECRET_KEY·DB_PASSWORD 아무 값(DB_HOST는 무시된다 — 로컬 MySQL로 덮인다)
 #          AUTHLIB_INSECURE_TRANSPORT=1   ← 로컬 확인 때만(http로 /authorize·/token을 받게 한다). 운영 .env에는 절대 넣지 않는다
-make prod-local                      # = COMPOSE_PROJECT_NAME=sandcorp-auth-local COMPOSE_FILE=docker-compose.prod.yml bash deploy/deploy.sh
+make prod-local                      # = COMPOSE_PROJECT_NAME=sandcorp-auth-local COMPOSE_FILE=docker-compose.prod.yml:docker-compose.prod-local.yml bash deploy/deploy.sh (로컬 MySQL 포함)
 X="docker compose -p sandcorp-auth-local -f docker-compose.prod.yml exec web python manage.py"
 $X signing_keys create
 $X owner create --username farrar142 --password '<12자 이상>'

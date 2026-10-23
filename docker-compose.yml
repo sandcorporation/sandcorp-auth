@@ -1,22 +1,31 @@
-# 로컬 개발·시험용 Postgres. 운영과 같은 엔진으로 시험한다(포트 15444, 프로젝트 sandcorp-auth-dev).
-# portfolio-dev(15442)와 같은 머신에서 함께 띄울 수 있게 포트와 프로젝트 이름을 나눴다.
+# 로컬 개발·시험용 MySQL. 운영(OCI MySQL HeatWave)과 같은 엔진·콜레이션으로 시험한다(포트 15444, 프로젝트 sandcorp-auth-dev).
+# portfolio-dev(15442)·news-dev(15443)와 같은 머신에서 함께 띄울 수 있게 포트와 프로젝트 이름을 나눴다. 13306은 쓰지 않는다.
+# 아래 innodb·binlog 옵션은 시험 속도용 로컬 전용이다(운영 DB와 무관).
 #   docker compose up -d db
 name: sandcorp-auth-dev
 services:
   db:
-    image: postgres:17-alpine
+    image: mysql:26.10.0
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_as_cs
+      - --skip-log-bin
+      - --innodb-flush-log-at-trx-commit=2
+      - --innodb-doublewrite=OFF
     environment:
-      POSTGRES_DB: sandcorp_auth
-      POSTGRES_USER: sandcorp_auth
-      POSTGRES_PASSWORD: sandcorp_auth
+      MYSQL_ROOT_PASSWORD: sandcorp_auth
+      MYSQL_DATABASE: sandcorp_auth
+      MYSQL_USER: sandcorp_auth
+      MYSQL_PASSWORD: sandcorp_auth
     ports:
-      - "127.0.0.1:15444:5432"
+      - "127.0.0.1:15444:3306"
     volumes:
-      - dbdata:/var/lib/postgresql/data
+      - mysqldata:/var/lib/mysql
+      - ./deploy/mysql/dev-init.sql:/docker-entrypoint-initdb.d/dev-init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sandcorp_auth -d sandcorp_auth"]
+      test: ["CMD-SHELL", "mysql -h 127.0.0.1 -usandcorp_auth -psandcorp_auth -e 'SELECT 1' sandcorp_auth"]
       interval: 2s
       timeout: 3s
-      retries: 30
+      retries: 60
 volumes:
-  dbdata:
+  mysqldata:

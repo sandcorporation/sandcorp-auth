@@ -1,4 +1,4 @@
-"""Request limiting on Postgres counters (no Redis).
+"""Request limiting on database counters (no Redis).
 
 Rules are named in `settings.THROTTLE` (`{"login": {"limit": 5, "window_seconds": 900,
 "block_seconds": 900}, ...}`). A counter is keyed by `"<name>:<key>"`, e.g. `login:ip:1.2.3.4`.
@@ -86,9 +86,13 @@ def check(name: str, key: str) -> ThrottleDecision:
 
 def _locked_row(full_key: str, now: datetime) -> ThrottleCounter:
     """The counter row for `full_key`, created if missing and locked until the transaction ends."""
+    # An upsert (MySQL `INSERT ... ON DUPLICATE KEY UPDATE key = key`), not `INSERT IGNORE`: an
+    # ignored duplicate takes a shared lock, and two waiters upgrading it to FOR UPDATE deadlock
+    # (1213). The no-op update takes the exclusive lock at once, so concurrent hits queue.
     ThrottleCounter.objects.bulk_create(
         [ThrottleCounter(key=full_key, window_started_at=now, count=0)],
-        ignore_conflicts=True,
+        update_conflicts=True,
+        update_fields=["key"],
     )
     return ThrottleCounter.objects.select_for_update().get(key=full_key)
 

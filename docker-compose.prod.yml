@@ -1,5 +1,7 @@
 # Production compose. Jenkins runs it on oracle with docker-compose.oracle.yml layered on top
 # (COMPOSE_PROJECT_NAME=sandcorp-auth). Secrets come from ./.env in the Jenkins workspace, never the repo.
+# The database is OCI MySQL HeatWave outside compose (private IP in the same VCN): web reads DB_* from
+# .env. `make prod-local` layers docker-compose.prod-local.yml, which adds a local MySQL.
 name: sandcorp-auth
 
 services:
@@ -11,14 +13,9 @@ services:
     env_file: [.env]
     environment:
       DJANGO_DEBUG: "0"
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
     ports:
       - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-18093}:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    # Hits /api/health (which round-trips to Postgres) with the first allowed host as Host header.
+    # Hits /api/health (which round-trips to the database) with the first allowed host as Host header.
     healthcheck:
       test:
         - CMD
@@ -33,23 +30,3 @@ services:
     cpus: 0.6
     mem_limit: 512m
     restart: unless-stopped
-
-  postgres:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-sandcorp_auth}
-      POSTGRES_USER: ${POSTGRES_USER:-sandcorp_auth}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    cpus: 0.4
-    mem_limit: 384m
-    restart: unless-stopped
-
-volumes:
-  pgdata:

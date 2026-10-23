@@ -37,6 +37,12 @@ class CimdRejected(Exception):
 
 def find_client(client_id: str) -> Client | None:
     """The active client with this `client_id`, fetching (or refreshing) its CIMD if needed."""
+    if not client_id.isascii():
+        # `client_id` is an ascii_bin column: no client can have this id, and a metadata
+        # document URL must be ASCII (non-ASCII characters percent-encoded).
+        if looks_like_cimd_url(client_id):
+            _record_rejected(client_id, "client_id is not ASCII")
+        return None
     client = Client.objects.filter(client_id=client_id).first()
     if client is not None and not client.active:
         return None
@@ -50,10 +56,12 @@ def find_client(client_id: str) -> Client | None:
     try:
         return _fetch_and_store(client_id, client)
     except CimdRejected as error:
-        audit.record(
-            audit.CLIENT_CIMD_REJECTED, client_id=client_id[:200], detail={"reason": str(error)}
-        )
+        _record_rejected(client_id, str(error))
         return None
+
+
+def _record_rejected(client_id: str, reason: str) -> None:
+    audit.record(audit.CLIENT_CIMD_REJECTED, client_id=client_id[:200], detail={"reason": reason})
 
 
 def looks_like_cimd_url(client_id: str) -> bool:

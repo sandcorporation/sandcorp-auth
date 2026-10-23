@@ -5,10 +5,23 @@ from django.conf import settings
 from django.contrib.auth.base_user import AbstractBaseUser
 from django.contrib.auth.hashers import check_password
 from django.db import models
-from django.db.models import Q
+from django.db.models import Case, Q, Value, When
 
 from adapters.clock import get_clock
 from services.redirect_uris import ALLOWED_GRANT_TYPES
+
+
+def _live_marker(condition: Q) -> models.GeneratedField:
+    """A stored column that is 1 while `condition` holds and NULL otherwise.
+
+    MySQL has no partial (conditional) unique indexes, so "at most one row where `condition`"
+    is a plain unique constraint over this column: NULLs never collide in a unique index.
+    """
+    return models.GeneratedField(
+        expression=Case(When(condition, then=Value(1)), default=Value(None)),
+        output_field=models.SmallIntegerField(null=True),
+        db_persist=True,
+    )
 
 
 class SigningKey(models.Model):
@@ -26,14 +39,11 @@ class SigningKey(models.Model):
     created_at = models.DateTimeField()
     active = models.BooleanField(default=False)
     retired_at = models.DateTimeField(null=True, blank=True)
+    active_marker = _live_marker(Q(active=True))
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(
-                fields=["active"],
-                condition=Q(active=True),
-                name="oauth_signingkey_single_active",
-            )
+            models.UniqueConstraint(fields=["active_marker"], name="oauth_signingkey_single_active")
         ]
 
     def __str__(self) -> str:
@@ -83,7 +93,10 @@ class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no
         DCR = "dcr", "DCR"
         ADMIN = "admin", "admin"
 
-    client_id = models.CharField(max_length=2048, unique=True)
+    # ascii_bin: compared byte for byte (case-sensitive), and 2048 ASCII bytes fit MySQL's
+    # 3072-byte unique index limit (utf8mb4 would need 8192). Non-ASCII ids never reach the DB
+    # (services.clients.find_client).
+    client_id = models.CharField(max_length=2048, unique=True, db_collation="ascii_bin")
     name = models.CharField(max_length=200)
     redirect_uris = models.JSONField(default=list)
     kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.PUBLIC)
@@ -154,12 +167,12 @@ class Consent(models.Model):
     scopes = models.JSONField(default=list)
     granted_at = models.DateTimeField()
     revoked_at = models.DateTimeField(null=True, blank=True)
+    live_marker = _live_marker(Q(revoked_at__isnull=True))
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["user", "client", "resource"],
-                condition=Q(revoked_at__isnull=True),
+                fields=["user", "client", "resource", "live_marker"],
                 name="oauth_consent_single_live",
             )
         ]
@@ -233,13 +246,12 @@ class RefreshTokenFamily(models.Model):
     created_at = models.DateTimeField()
     revoked_at = models.DateTimeField(null=True, blank=True)
     revoked_reason = models.CharField(max_length=40, blank=True)
+    live_marker = _live_marker(Q(revoked_at__isnull=True))
 
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=["consent"],
-                condition=Q(revoked_at__isnull=True),
-                name="oauth_refresh_family_single_live",
+                fields=["consent", "live_marker"], name="oauth_refresh_family_single_live"
             )
         ]
 
