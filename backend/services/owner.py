@@ -2,6 +2,7 @@
 
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
+from django.core.validators import validate_email
 from django.db import transaction
 
 from accounts.models import TotpDevice
@@ -47,4 +48,26 @@ def reset_owner_totp() -> User:
     """Delete the TOTP device: the next login must enroll again, open sessions end."""
     owner = get_owner()
     TotpDevice.objects.filter(user=owner).delete()
+    return owner
+
+
+def set_owner_email(email: str) -> User:
+    """The email OpenID Connect hands out (`email`, `email_verified`). Empty clears it.
+    Raises django ValidationError for a malformed address."""
+    owner = get_owner()
+    email = email.strip()
+    if email:
+        validate_email(email)
+    owner.email = email
+    owner.save(update_fields=["email"])
+    return owner
+
+
+def set_owner_name(name: str) -> User:
+    """The display name OpenID Connect hands out (`name`), kept whole in `first_name`.
+    Empty clears it."""
+    owner = get_owner()
+    owner.first_name = name.strip()[:150]
+    owner.last_name = ""
+    owner.save(update_fields=["first_name", "last_name"])
     return owner

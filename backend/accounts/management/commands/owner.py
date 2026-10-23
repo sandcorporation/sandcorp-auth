@@ -10,6 +10,8 @@ from services.owner import (
     OwnerExists,
     create_owner,
     reset_owner_totp,
+    set_owner_email,
+    set_owner_name,
     set_owner_password,
 )
 
@@ -17,14 +19,21 @@ DEFAULT_USERNAME = "farrar142"
 
 
 class Command(BaseCommand):
-    help = "대표 계정 관리: create(처음 한 번), set-password, reset-totp."
+    help = (
+        "대표 계정 관리: create(처음 한 번), set-password, reset-totp, "
+        "set-email --email, set-name --name (OIDC 로그인 정보)."
+    )
 
     def add_arguments(self, parser: ArgumentParser) -> None:
-        parser.add_argument("action", choices=["create", "set-password", "reset-totp"])
+        parser.add_argument(
+            "action", choices=["create", "set-password", "reset-totp", "set-email", "set-name"]
+        )
         parser.add_argument("--username", default=DEFAULT_USERNAME)
         parser.add_argument(
             "--password", help="생략하면 터미널에서 묻거나 표준 입력의 첫 줄을 읽는다"
         )
+        parser.add_argument("--email", help="set-email: 대표 이메일(빈 값이면 지운다)")
+        parser.add_argument("--name", help="set-name: 대표 표시 이름(빈 값이면 지운다)")
 
     def _password(self, given: str | None) -> str:
         if given is not None:
@@ -53,6 +62,16 @@ class Command(BaseCommand):
                 self.stdout.write(
                     f"'{owner.username}'의 비밀번호를 바꿨습니다. 기존 세션은 끝납니다."
                 )
+            elif action == "set-email":
+                if options["email"] is None:
+                    raise CommandError("--email이 필요합니다", returncode=1)
+                owner = set_owner_email(options["email"])
+                self.stdout.write(f"'{owner.username}'의 이메일: {owner.email or '(없음)'}")
+            elif action == "set-name":
+                if options["name"] is None:
+                    raise CommandError("--name이 필요합니다", returncode=1)
+                owner = set_owner_name(options["name"])
+                self.stdout.write(f"'{owner.username}'의 이름: {owner.first_name or '(없음)'}")
             else:
                 owner = reset_owner_totp()
                 self.stdout.write(

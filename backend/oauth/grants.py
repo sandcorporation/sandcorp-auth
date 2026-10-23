@@ -6,6 +6,10 @@ one `resource` that is a registered resource URL, and a non-empty `scope` made o
 resource's scope names. Codes are stored as SHA-256 hashes, bound to the consent that allowed
 them, and are good once for `AUTHORIZATION_CODE_LIFETIME`.
 
+OpenID Connect (`services.oidc`) adds login info scopes: without a `resource` they bind the
+grant to the internal login info resource, with one they ride along. The `nonce` is kept on the
+code for the ID token.
+
 At the token endpoint the code is claimed atomically (`used_at`), a `resource` sent there must
 equal the code's, and the access token's `aud` is the code's resource. A used code that comes
 back revokes the refresh token family its consent opened (`oauth.tokens.report_code_reuse`).
@@ -35,9 +39,12 @@ from oauth.tokens import (
     revoke_family,
 )
 from services import audit
+from services.oidc import LOGIN_INFO_SCOPES, OPENID, USERINFO_RESOURCE
 from services.signing import random_token
 
 type Headers = list[tuple[str, str]]
+
+NONCE_MAX_LENGTH = 255  # AuthorizationCode.nonce
 
 
 class InvalidTargetError(OAuth2Error):  # type: ignore[misc]  # authlib has no type stubs
@@ -67,7 +74,11 @@ def hash_code(code: str) -> str:
 
 
 def requested_resource(request: OAuth2Request) -> Resource:
+    """The one `resource` asked for; without one, an OpenID Connect request (scope `openid`)
+    gets the internal login info resource (`services.oidc.USERINFO_RESOURCE`)."""
     values: list[str] = request.payload.datalist.get("resource", [])
+    if not values and OPENID in str(request.payload.scope or "").split():
+        values = [USERINFO_RESOURCE]
     if len(values) != 1:
         raise InvalidTargetError("Exactly one 'resource' is required.")
     resource = Resource.objects.filter(url=values[0]).first()
@@ -76,14 +87,25 @@ def requested_resource(request: OAuth2Request) -> Resource:
     return resource
 
 
-def requested_scopes(request: OAuth2Request, resource: Resource) -> list[str]:
-    """The requested scope names (sorted, distinct); all must belong to `resource`."""
+def requested_scopes(request: OAuth2Request, client: Client, resource: Resource) -> list[str]:
+    """The requested scope names (sorted, distinct). Each belongs to `resource`, or is a login
+    info scope (`services.oidc`) asked for with `openid` by a confidential client; besides
+    those, at least one scope of `resource`."""
     names = sorted(set(str(request.payload.scope or "").split()))
     if not names:
         raise InvalidScopeError("'scope' is required.")
-    known = set(resource.scopes.filter(name__in=names).values_list("name", flat=True))
-    if known != set(names):
-        raise InvalidScopeError(f"Scopes not in {resource.url}: {sorted(set(names) - known)}")
+    login_info = LOGIN_INFO_SCOPES.intersection(names)
+    if login_info:
+        if OPENID not in login_info:
+            raise InvalidScopeError("'profile' and 'email' need 'openid'.")
+        if client.is_public:
+            raise InvalidScopeError("Login info scopes are for confidential clients only.")
+    own = set(names) if resource.url == USERINFO_RESOURCE else set(names) - login_info
+    if not own:
+        raise InvalidScopeError(f"'scope' needs a scope of {resource.url}.")
+    known = set(resource.scopes.filter(name__in=own).values_list("name", flat=True))
+    if known != own:
+        raise InvalidScopeError(f"Scopes not in {resource.url}: {sorted(own - known)}")
     return names
 
 
@@ -130,7 +152,9 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
         redirect_uri: str = super().validate_authorization_request()
         try:
             self.resource = requested_resource(self.request)
-            self.scopes = requested_scopes(self.request, self.resource)
+            self.scopes = requested_scopes(self.request, self.request.client, self.resource)
+            if len(str(self.request.payload.data.get("nonce") or "")) > NONCE_MAX_LENGTH:
+                raise InvalidRequestError(f"'nonce' is longer than {NONCE_MAX_LENGTH}.")
         except OAuth2Error as error:
             error.redirect_uri = redirect_uri
             raise
@@ -156,6 +180,7 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
             scope=" ".join(self.scopes),
             code_challenge=request.payload.data["code_challenge"],
             code_challenge_method=request.payload.data["code_challenge_method"],
+            nonce=str(request.payload.data.get("nonce") or ""),
             auth_time=user.last_login or now,
             created_at=now,
         )
@@ -207,6 +232,8 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
             expires_in=expires_in,
             include_refresh_token=include_refresh_token,
             resource=code.resource,  # the access token's `aud`
+            auth_time=code.auth_time,
+            nonce=code.nonce or None,
         )
         return token
 
@@ -293,6 +320,7 @@ class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no 
             expires_in=expires_in,
             include_refresh_token=include_refresh_token,
             resource=token.family.resource,  # the access token's `aud`, always the family's
+            auth_time=token.auth_time,  # OpenID Connect Core 12.2: the original login; no nonce
         )
         return generated
 
