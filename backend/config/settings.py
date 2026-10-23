@@ -119,9 +119,12 @@ AUTH_PASSWORD_VALIDATORS = [
     },
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
 ]
-# Sessions end after SESSION_AGE_SECONDS (default 12 h) or when the browser closes.
-SESSION_COOKIE_AGE = int(env("SESSION_AGE_SECONDS", str(12 * 60 * 60)))
-SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+# One owner, one login: the session lasts SESSION_AGE_SECONDS (default 7 days) from the
+# login, survives closing the browser (persistent cookie), and activity does not extend it
+# (SESSION_SAVE_EVERY_REQUEST stays False). Password change / TOTP reset still end it.
+SESSION_COOKIE_AGE = int(env("SESSION_AGE_SECONDS", str(7 * 24 * 60 * 60)))
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+SESSION_SAVE_EVERY_REQUEST = False
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = not DEBUG
