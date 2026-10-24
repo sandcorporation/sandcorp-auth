@@ -131,6 +131,10 @@ def logout_view(request: HttpRequest) -> HttpResponse:
     if request.user.is_authenticated:
         audit.record(audit.LOGOUT, actor=request.user.get_username(), ip=client_ip(request))
     logout(request)
+    target = request.POST.get("next", "")
+    # Internal paths only: "/x" yes, "//host" and "/\\host" no.
+    if target.startswith("/") and not target.startswith(("//", "/\\")):
+        return redirect(target)
     return redirect("accounts:login")
 
 

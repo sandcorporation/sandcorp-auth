@@ -236,10 +236,18 @@ def _consent_screen(
         for scope, label in (("email", "이메일"), ("profile", "이름"))
         if scope in grant.scopes
     ]
+    user = request.user
+    member = isinstance(user, User) and is_member(user)
+    if member:
+        assert isinstance(user, User)
+        account_label = user.first_name or user.email or "Sandcorp 계정"
+    else:
+        account_label = user.get_username()
     context = {
+        "account_label": account_label,
         "client_name": client.name,
         "client_id": client.client_id if client.registered_via == Client.Via.CIMD else "",
-        "is_member": isinstance(request.user, User) and is_member(request.user),
+        "is_member": member,
         "shares": shares,
         "resource": grant.resource,
         "scopes": scopes,
