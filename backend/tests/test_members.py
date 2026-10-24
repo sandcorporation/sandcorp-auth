@@ -161,6 +161,12 @@ def test_a_member_shaped_username_cannot_be_the_owner(db: None) -> None:
         create_owner("m_01JB0000000000000000000000", OWNER_PASSWORD)
 
 
+def test_member_is_refused_by_the_admin_without_a_redirect_loop(member_client: Client) -> None:
+    response = member_client.get(f"/{settings.ADMIN_PATH}", follow=True)
+    assert response.status_code == 403
+    assert len(response.redirect_chain) <= 2
+
+
 def test_member_session_is_not_sent_to_totp(member_client: Client) -> None:
     response = member_client.get("/")
     assert response.status_code == 200
