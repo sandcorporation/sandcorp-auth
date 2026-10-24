@@ -27,6 +27,7 @@ from oauth.tokens import live_family
 from services import throttle
 from services.members import ExternalProfile, IdentityTaken, create_member
 from services.signing import ActiveSigningKeyExists, create_signing_key
+from services.social import SignInResult, link_identity, sign_in, unlink_identity
 from tests.conftest import (
     PORTFOLIO,
     FrozenClock,
@@ -91,6 +92,32 @@ def test_concurrent_sign_ups_with_one_identity_make_one_member() -> None:
     assert all(isinstance(r, IdentityTaken) for r in losers), losers
     assert ExternalIdentity.objects.count() == 1
     assert User.objects.count() == 1  # the losers' half-made accounts were rolled back
+
+
+def test_concurrent_first_social_logins_sign_into_one_account() -> None:
+    profile = ExternalProfile(provider="google", provider_sub="5151", display_name="동시")
+
+    results = race(lambda: sign_in(profile, ip="127.0.0.1"))
+
+    users = {r.user.pk for r in results if isinstance(r, SignInResult) and r.user is not None}
+    assert len(users) == 1, results
+    assert User.objects.count() == 1
+
+
+def test_concurrent_unlinks_leave_the_last_login(db: None) -> None:
+    for _ in range(ROUNDS // 4):
+        User.objects.all().delete()
+        user = create_member(ExternalProfile(provider="google", provider_sub="6161"))
+        link_identity(user, ExternalProfile(provider="kakao", provider_sub="6262"), ip="")
+        ids = list(ExternalIdentity.objects.filter(user=user).values_list("pk", flat=True))
+
+        def unlink_one(user: User = user, ids: list[int] = ids) -> None:
+            unlink_identity(user, ids.pop(), ip="")
+
+        results = race(unlink_one, threads=2)
+
+        assert sorted(type(r).__name__ for r in results) == ["LastIdentity", "NoneType"], results
+        assert ExternalIdentity.objects.filter(user=user).count() == 1
 
 
 def _consent(owner: User, oauth_client: OAuthClient, resource: Resource) -> Consent:

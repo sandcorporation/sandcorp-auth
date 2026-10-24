@@ -14,6 +14,7 @@ from django.utils.safestring import mark_safe
 from django.views.decorators.http import require_http_methods, require_POST
 
 from accounts.session import NEXT_KEY, PENDING_USER_KEY, pending_user, safe_next
+from accounts.social_views import social_buttons
 from core.http import client_ip
 from services import audit
 from services.login import (
@@ -66,7 +67,12 @@ def login_view(request: HttpRequest) -> HttpResponse:
         if not wait:
             wait = login_failed(audit.LOGIN_PASSWORD_FAILED, username, ip, "password")
         error = _locked_message(wait) if wait else "아이디 또는 비밀번호가 맞지 않습니다."
-    context = {"error": error, "username": username, "next": next_url or ""}
+    context = {
+        "error": error,
+        "username": username,
+        "next": next_url or "",
+        "social": social_buttons(next_url),
+    }
     return render(request, "accounts/login.html", context)
 
 

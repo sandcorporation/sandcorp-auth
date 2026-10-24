@@ -1,7 +1,8 @@
 """Shared fixtures for backend HTTP-boundary tests.
 
 Fake adapters get registered here as they appear: `frozen_clock`, `recording_randomness`,
-`fake_http` (documents by URL, host addresses by name).
+`fake_http` (documents by URL, host addresses by name), `fake_providers` (autouse: Google and
+Kakao at the HTTP boundary, see `FakeProviders`).
 `signing_key` gives a test an active token signing key.
 `owner` is the owner account (before TOTP enrollment); `logged_in_client` is a test client that
 finished password + TOTP (Django `login()` done), with `frozen_clock` running.
@@ -16,20 +17,29 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlencode, urlsplit
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
+from jwt.algorithms import RSAAlgorithm
 
 from adapters.clock import set_clock
 from adapters.http import FetchedDocument, FetchError, set_http_client
 from adapters.randomness import set_randomness
+from adapters.social_http import set_provider_http
 from oauth.models import Client as OAuthClient
 from oauth.models import SigningKey
 from services.members import ExternalProfile, create_member
 from services.owner import create_owner
 from services.signing import create_signing_key
 from services.totp import current_code, enrollment_device
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
 if TYPE_CHECKING:  # the test client's response type exists only in django-stubs
     from django.test.client import _MonkeyPatchedWSGIResponse as TestResponse
@@ -259,6 +269,91 @@ def cimd_client(fake_http: FakeHttp, frozen_clock: FrozenClock, db: None) -> OAu
 
 
 PORTFOLIO = "https://sandcorp.co.kr/mcp"
+
+
+class FakeProviders:
+    """Stands in for Google and Kakao at the HTTP boundary (`adapters.social_http`), so the
+    real id_token checks run against tokens signed by a test RSA key.
+
+    A test registers what the provider will say for a code: `google_codes[code] = claims`
+    (signed with the test key; a `str` is sent as the id_token as it is) and
+    `kakao_codes[code] = user` (the `/v2/user/me` document). Codes are single use. `posted`
+    records every form post (url, data); anything else raises FetchError."""
+
+    def __init__(self) -> None:
+        self.google_codes: dict[str, dict[str, object] | str] = {}
+        self.kakao_codes: dict[str, dict[str, object]] = {}
+        self.kakao_tokens: dict[str, dict[str, object]] = {}
+        self.posted: list[tuple[str, dict[str, str]]] = []
+        self.requested: list[str] = []
+
+    @staticmethod
+    def sign(claims: dict[str, object], *, key: "RSAPrivateKey | None" = None) -> str:
+        return jwt.encode(
+            claims, key or _google_key(), algorithm="RS256", headers={"kid": GOOGLE_KID}
+        )
+
+    @staticmethod
+    def _json(document: object, status: int = 200) -> FetchedDocument:
+        return FetchedDocument(
+            status, {"content-type": "application/json"}, json.dumps(document).encode()
+        )
+
+    def post_form(self, url: str, data: "Mapping[str, str]") -> FetchedDocument:
+        from services.social_providers import GOOGLE_TOKEN_URL, KAKAO_TOKEN_URL
+
+        self.posted.append((url, dict(data)))
+        code = data.get("code", "")
+        if url == GOOGLE_TOKEN_URL:
+            claims = self.google_codes.pop(code, None)
+            if claims is None:
+                return self._json({"error": "invalid_grant"}, 400)
+            token = claims if isinstance(claims, str) else self.sign(claims)
+            return self._json({"access_token": "ya29.fake", "id_token": token})
+        if url == KAKAO_TOKEN_URL:
+            user = self.kakao_codes.pop(code, None)
+            if user is None:
+                return self._json({"error": "invalid_grant"}, 400)
+            access_token = f"kakao-at-{len(self.kakao_tokens)}"
+            self.kakao_tokens[access_token] = user
+            return self._json({"access_token": access_token, "token_type": "bearer"})
+        raise FetchError(f"no fake provider at {url}")
+
+    def get(self, url: str, *, headers: "Mapping[str, str]") -> FetchedDocument:
+        from services.social_providers import GOOGLE_JWKS_URL, KAKAO_USER_URL
+
+        self.requested.append(url)
+        if url == GOOGLE_JWKS_URL:
+            jwk = json.loads(RSAAlgorithm.to_jwk(_google_key().public_key()))
+            return self._json({"keys": [{**jwk, "kid": GOOGLE_KID, "alg": "RS256", "use": "sig"}]})
+        if url == KAKAO_USER_URL:
+            token = headers.get("Authorization", "").removeprefix("Bearer ")
+            if token not in self.kakao_tokens:
+                return self._json({"msg": "this access token does not exist", "code": -401}, 401)
+            return self._json(self.kakao_tokens[token])
+        raise FetchError(f"no fake provider at {url}")
+
+
+GOOGLE_KID = "test-google-kid"
+_GOOGLE_KEYS: "list[RSAPrivateKey]" = []
+
+
+def _google_key() -> "RSAPrivateKey":
+    """One RSA key per test run (generating one is slow)."""
+    if not _GOOGLE_KEYS:
+        _GOOGLE_KEYS.append(rsa.generate_private_key(public_exponent=65537, key_size=2048))
+    return _GOOGLE_KEYS[0]
+
+
+@pytest.fixture(autouse=True)
+def fake_providers() -> Iterator[FakeProviders]:
+    """Every test talks to fake Google/Kakao (never the real ones)."""
+    fake = FakeProviders()
+    previous = set_provider_http(fake)
+    yield fake
+    set_provider_http(previous)
+
+
 NEWS = "https://news.sandcorp.co.kr/mcp"
 PKCE_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk-padding-for-43-chars"
 
