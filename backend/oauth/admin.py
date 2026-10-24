@@ -28,6 +28,7 @@ from services.confidential_clients import (
     rotate_client_secret,
 )
 from services.consents import revoke_consent
+from services.members import record_members_changed
 from services.redirect_uris import valid_redirect_uri
 
 if TYPE_CHECKING:
@@ -133,8 +134,16 @@ class ClientAdmin(_ClientAdmin):
     for CIMD, have their cached metadata document dropped. Confidential clients (the sites'
     admin login) are added here: the secret is shown once in a message, then only its hash."""
 
-    list_display = ["name", "client_id", "registered_via", "kind", "active", "created_at"]
-    list_filter = ["registered_via", "kind", "active"]
+    list_display = [
+        "name",
+        "client_id",
+        "registered_via",
+        "kind",
+        "active",
+        "allows_members",
+        "created_at",
+    ]
+    list_filter = ["registered_via", "kind", "active", "allows_members"]
     search_fields = ["name", "client_id"]
     ordering = ["-created_at"]
 
@@ -188,6 +197,10 @@ class ClientAdmin(_ClientAdmin):
     ) -> None:
         if change:
             super().save_model(request, obj, form, change)
+            if "allows_members" in form.changed_data:
+                record_members_changed(
+                    obj, actor=request.user.get_username(), ip=client_ip(request)
+                )
             return
         issued = create_confidential_client(
             obj.name,

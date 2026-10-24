@@ -9,8 +9,17 @@ from adapters.clock import get_clock
 from services.signing import ALGORITHM, active_signing_key, random_token
 
 
-def issue_access_token(*, sub: str, audience: str, client_id: str, scopes: Sequence[str]) -> str:
-    """Sign an access token with the active key. Raises NoActiveSigningKey if there is none."""
+def issue_access_token(
+    *,
+    sub: str,
+    audience: str,
+    client_id: str,
+    scopes: Sequence[str],
+    acct: str | None = None,
+) -> str:
+    """Sign an access token with the active key. Raises NoActiveSigningKey if there is none.
+    `acct` (the account kind claim, ADR 0003) is given for members only: the owner's tokens
+    keep exactly the claims of §2."""
     key = active_signing_key()
     iat = int(get_clock().now().timestamp())
     claims: dict[str, str | int] = {
@@ -23,6 +32,8 @@ def issue_access_token(*, sub: str, audience: str, client_id: str, scopes: Seque
         "exp": iat + int(settings.ACCESS_TOKEN_LIFETIME.total_seconds()),
         "jti": random_token(),
     }
+    if acct is not None:
+        claims["acct"] = acct
     return jwt.encode(
         claims, key.private_key, algorithm=ALGORITHM, headers={"kid": key.kid, "typ": "JWT"}
     )

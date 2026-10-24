@@ -1,12 +1,24 @@
 # sandcorp-auth
 
-Sandcorp의 사이트들이 공유하는 인증·인가 서비스. 대표 한 명의 로그인과, Claude 같은 클라이언트가 각 사이트의 MCP·관리 API에 접근할 권한 발급을 맡는다.
+Sandcorp의 사이트들이 공유하는 인증·인가 서비스. 대표의 로그인, 일반 사용자의 소셜 로그인(Sandcorp 계정), 그리고 Claude 같은 클라이언트가 각 사이트의 MCP·관리 API에 접근할 권한 발급을 맡는다.
 
 ## Language
 
 **대표(Owner)**:
-이 서비스에 계정을 가진 유일한 사람. 비밀번호와 TOTP로 로그인한다.
-_Avoid_: 관리자, 사용자, 어드민
+비밀번호와 TOTP로 로그인하는 단 한 사람(`sub=farrar142`). `admin`·`editor` 스코프는 대표만 받는다. 토큰에 계정 종류 클레임(`acct`)이 없다.
+_Avoid_: 관리자, 어드민
+
+**Sandcorp 계정(Sandcorp account)**:
+auth.sandcorp.co.kr에 있는 계정 하나. 이것으로 로그인 세션을 공유해 여러 앱에 들어간다(SSO). 종류는 대표와 일반 사용자 둘이다(ADR 0003).
+_Avoid_: 통합 계정, 회원 계정
+
+**일반 사용자(Member)**:
+Google·Kakao 소셜 로그인으로만 들어오는 Sandcorp 계정. `sub`는 `m_` + ULID 26자(바뀌지 않고, 이름·이메일에서 만들지 않는다). 비밀번호·TOTP가 없고, `login`·`openid`·`profile`·`email` 스코프만 받으며, 토큰에 `acct=member`가 붙는다. 앱 안의 권한은 각 앱이 `sub`를 키로 정한다.
+_Avoid_: 회원, 고객, 사용자
+
+**외부 신원(External identity)**:
+Sandcorp 계정에 연결된 소셜 로그인 계정 하나(제공자 google|kakao, 제공자 `sub`, 이메일과 검증 여부, 표시 이름, 연결 시각). (제공자, 제공자 `sub`)는 한 계정에만 붙고, 한 계정에 여러 신원이 붙을 수 있다. 자동 병합은 없다.
+_Avoid_: 소셜 계정, 로그인 수단
 
 **TOTP 장치(TOTP device)**:
 대표의 인증 앱에 등록된 TOTP 비밀. 첫 코드를 맞히기 전은 「등록 전」이며, 그동안 대표는 비밀번호를 통과해도 등록 화면 외 어디에도 못 들어간다. 한 번 쓴 코드는 다시 받지 않는다.
@@ -14,7 +26,7 @@ _Avoid_: OTP 기기, 2FA 장치
 
 **클라이언트(Client)**:
 대표를 대신해 토큰을 받는 프로그램(claude.ai 커넥터, Claude Code, 사이트 자체의 관리 화면). 동적 등록되거나 admin에서 등록된다.
-**공개 클라이언트**는 시크릿이 없고(`token_endpoint_auth_method=none`) CIMD·DCR로 등록된다. **기밀 클라이언트**는 사이트의 관리 화면 로그인용으로, 대표가 관리 명령(`clients create-confidential`)이나 admin으로만 등록하며 `/token`에서 시크릿(`client_secret_basic`·`client_secret_post`)으로 자신을 증명한다. 시크릿은 발급 때 한 번만 보이고 해시만 남는다. 둘 다 PKCE가 필수다.
+**허용 클라이언트**는 「일반 사용자 허용」 표시(`allows_members`, 기본 꺼짐)가 켜진 클라이언트로, 일반 사용자도 코드·토큰을 받는다. 꺼진 클라이언트에는 대표만 로그인한다. **공개 클라이언트**는 시크릿이 없고(`token_endpoint_auth_method=none`) CIMD·DCR로 등록된다. **기밀 클라이언트**는 사이트의 관리 화면 로그인용으로, 대표가 관리 명령(`clients create-confidential`)이나 admin으로만 등록하며 `/token`에서 시크릿(`client_secret_basic`·`client_secret_post`)으로 자신을 증명한다. 시크릿은 발급 때 한 번만 보이고 해시만 남는다. 둘 다 PKCE가 필수다.
 _Avoid_: 앱, 커넥터
 
 **로그인 정보 스코프(OpenID scope)**:

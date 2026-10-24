@@ -62,6 +62,8 @@ OIDC 로그인 정보 스코프(`openid`·`profile`·`email`)는 리소스 스�
 
 이 서비스는 id_token과 userinfo를 주지 않는다. 사이트가 받는 신원 정보는 액세스 토큰의 `sub` 하나다.
 
+일반 사용자(ADR 0003)의 토큰에는 위 클레임에 더해 `"acct": "member"`가 있고 `sub`는 `m_` + ULID다. **대표 토큰에는 `acct`가 없다.** 이 절의 규칙(T11)은 그대로이고, 일반 사용자를 받는 사이트만 10절을 따른다.
+
 ## 3. 검증 규칙
 
 순서대로 적용한다. 하나라도 어기면 거부한다. T1~T11 위반은 **401 `invalid_token`**, S1 위반만 **403 `insufficient_scope`** 이다.
@@ -336,3 +338,48 @@ def _deny(status: int, challenge: str) -> HttpResponse:
 참조 구현: `backend/tests/reference_validator.py`
 
 규칙과 값의 원본은 이 문서이고, 그 파일은 이 문서를 그대로 옮긴 것이다. 시험(`backend/tests/test_reference_validator.py`)이 통과·거부 사례(다른 `aud`, 만료, 다른 키 서명, `alg` 변조 `HS256`·`none`, 스코프 부족, 모르는 `kid` 재조회, `iss` 불일치, JWKS TTL·재조회 제한·조회 실패)를 고정 시계로 확인한다. 이 서비스의 발급 시험도 실제 발급 토큰을 이 검증기에 통과시킨다. 규칙을 바꾸면 문서·참조 구현·시험을 같은 커밋에서 고친다.
+
+## 10. 일반 사용자를 받는 사이트
+
+대표만 받는 사이트(portfolio, 뉴스, metrics, MCP)는 이 절을 보지 않는다 — T11이 일반 사용자 토큰을 거른다. 일반 사용자(Sandcorp 계정, ADR 0003)도 받는 사이트(Sandcorp Flow 등)만 이 규칙을 쓴다. 그 사이트의 클라이언트는 auth 쪽에서 「일반 사용자 허용」이 켜져 있어야 한다(`manage.py clients members --client-id <id> --allow`, 조율자).
+
+### 클레임
+
+| 클레임 | 대표 토큰 | 일반 사용자 토큰 |
+|---|---|---|
+| `acct` | **없음** | `"member"` (문자열) |
+| `sub` | `"farrar142"` (`AUTH_OWNER_SUB`) | `"m_"` + ULID 26자, 예 `"m_01JB2Z3Y4X5W6V7T8S9R0Q1P2N"` (정규식 `^m_[0-7][0-9A-HJKMNP-TV-Z]{25}$`, 대소문자 구분) |
+| `scope` | 동의한 스코프 | `login`(리소스 스코프)만. `admin`·`editor`는 절대 없다 |
+
+나머지 클레임(2절 표)은 같다. `sub`는 바뀌지 않는 키다 — 앱의 사용자·테넌트·역할은 `sub`로 묶고 이메일로 묶지 않는다.
+
+### 검증 규칙
+
+T1~T10은 3절 그대로, **T11 대신 A1~A3**, 그다음 S1.
+
+- **A1.** `acct` 클레임이 **없으면** 대표 토큰이다. `sub`가 `AUTH_OWNER_SUB`와 정확히 같지 않으면 거부(T11과 같다).
+- **A2.** `acct`가 있는데 값이 문자열 `"member"`와 정확히 같지 않으면 거부(`"owner"`, 대소문자 차이, 빈 문자열, 배열, `null` 모두 거부).
+- **A3.** `acct`가 `"member"`인데 `sub`가 위 정규식에 맞지 않으면 거부.
+
+A1~A3 위반은 401 `invalid_token`. 대표 전용 기능(그 사이트의 관리 화면 등)은 A1을 통과한 토큰(`acct` 없음)에만 연다 — 일반 사용자 토큰의 스코프로 판단하지 않는다.
+
+### ID 토큰과 userinfo(로그인 정보 스코프)
+
+일반 사용자를 받는 앱은 보통 기밀 클라이언트로 `openid`(필요하면 `profile`·`email`)를 요청해 신원을 받는다(ADR 0001). 일반 사용자의 ID 토큰과 `/userinfo` 응답:
+
+| 클레임 | 언제 | 값 |
+|---|---|---|
+| `sub` | 언제나 | 위 `m_` ULID |
+| `acct` | 언제나 | `"member"` (대표는 없음) |
+| `name` | `profile`이고 표시 이름이 있을 때 | 표시 이름 |
+| `email`, `email_verified` | `email`이고 이메일이 있을 때만 | 이메일, 그리고 제공자가 검증했는지(불리언). **이메일이 없으면 두 클레임 모두 없다**(Kakao는 이메일이 선택 동의다). 이메일이 필요한 앱은 없을 때 사용자에게 입력받는다 |
+
+일반 사용자에게는 `preferred_username`이 없다(username이 곧 `sub`). ID 토큰의 나머지(`iss`·`aud`=`client_id`·`iat`·`exp`·`auth_time`·`nonce`)는 대표와 같다.
+
+### auth가 거절하는 경우
+
+- 「일반 사용자 허용」이 꺼진 클라이언트로 일반 사용자가 `/authorize`에 오면 동의 화면 없이 `redirect_uri?error=access_denied&state=…`로 돌아간다. 코드 교환·리프레시 사이에 표시가 꺼지면 `/token`이 400 `invalid_grant`.
+- 일반 사용자가 `login`·`openid`·`profile`·`email` 밖의 스코프(`admin`, `editor` 등)를 요청하면 `error=invalid_scope`로 돌아간다(빼고 발급하지 않는다).
+
+참조 구현은 `backend/tests/reference_validator.py`의 `validate_account_access_token`(반환값 `acct`가 `"owner"` 또는 `"member"`), 시험은 `backend/tests/test_reference_validator.py`와 `backend/tests/test_members.py`.
+

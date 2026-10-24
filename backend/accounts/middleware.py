@@ -8,11 +8,12 @@ from django.shortcuts import redirect
 from django.urls import reverse
 
 from accounts.session import pending_user
+from services.members import is_member
 from services.totp import is_enrolled
 
 
 class TotpEnrollmentMiddleware:
-    """An account before TOTP enrollment reaches nothing but the setup screen (and logout).
+    """An owner before TOTP enrollment reaches nothing but the setup screen (and logout).
 
     A logged-in session whose device was reset (`owner reset-totp`) is logged out first.
     """
@@ -22,7 +23,12 @@ class TotpEnrollmentMiddleware:
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
         user = request.user
-        if isinstance(user, User) and user.is_authenticated and not is_enrolled(user):
+        if (
+            isinstance(user, User)
+            and user.is_authenticated
+            and not is_enrolled(user)
+            and not is_member(user)  # members sign in with a social login, no TOTP
+        ):
             logout(request)
         pending = pending_user(request)
         if pending is not None and not is_enrolled(pending):
