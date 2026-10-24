@@ -39,6 +39,8 @@ SOCIAL_LOGIN_FAILED: Final = "login.social_failed"
 MEMBER_CREATED: Final = "member.created"
 IDENTITY_LINKED: Final = "identity.linked"
 IDENTITY_UNLINKED: Final = "identity.unlinked"
+TERMS_REGISTERED: Final = "terms.registered"
+TERMS_AGREED: Final = "terms.agreed"
 
 SECRET_KEYS: Final = frozenset({"password", "code", "token", "secret", "otp"})
 

@@ -260,7 +260,7 @@ def test_rotate_secret_command_replaces_the_secret(
     tokens = login_tokens(owner_client, portfolio_site_client)
     out = io.StringIO()
 
-    call_command("clients", "rotate-secret", "--client-id", oauth_client.client_id, stdout=out)
+    call_command("clients", "rotate-secret", f"--client-id={oauth_client.client_id}", stdout=out)
 
     new_secret = printed_secret(out.getvalue())
     assert new_secret != old_secret

@@ -69,3 +69,54 @@ class ExternalIdentity(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_provider_display()} {self.provider_sub}"
+
+
+class TermsDocument(models.Model):
+    """One version of a terms document a member must agree to (#37). The text lives in
+    `sandcorporation/privacy-and-terms`; only its public URL is kept here. The current version
+    of a kind is the latest whose effective date has come; registered versions are not edited
+    (agreements point at them), a change is a new version."""
+
+    class Kind(models.TextChoices):
+        TERMS = "terms", "Sandcorp 계정 이용약관"
+        PRIVACY = "privacy", "개인정보 수집·이용"
+
+    kind = models.CharField("종류", max_length=16, choices=Kind.choices)
+    version = models.CharField("버전", max_length=32)
+    effective_date = models.DateField("시행일")
+    url = models.URLField("주소", max_length=500)
+    created_at = models.DateTimeField("등록 시각")
+
+    class Meta:
+        verbose_name = "약관 문서"
+        verbose_name_plural = "약관 문서"
+        constraints = [
+            models.UniqueConstraint(fields=["kind", "version"], name="accounts_terms_version_uniq")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()} {self.version}"
+
+
+class TermsAgreement(models.Model):
+    """A member's agreement to one document version, with the age-14 confirmation given with
+    it. Kept as given: a later version adds rows, it never changes these."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="terms_agreements"
+    )
+    document = models.ForeignKey(TermsDocument, on_delete=models.PROTECT, related_name="agreements")
+    agreed_at = models.DateTimeField("동의 시각")
+    age_confirmed = models.BooleanField("만 14세 이상 확인")
+
+    class Meta:
+        verbose_name = "약관 동의"
+        verbose_name_plural = "약관 동의"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "document"], name="accounts_terms_agreement_uniq"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.user_id} → {self.document}"

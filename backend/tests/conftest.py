@@ -13,7 +13,7 @@ one with a Google identity, `member_client` a test client logged in as that memb
 import hashlib
 import json
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -25,6 +25,7 @@ from django.test import Client
 from django.utils import timezone
 from jwt.algorithms import RSAAlgorithm
 
+from accounts.models import TermsDocument
 from adapters.clock import set_clock
 from adapters.http import FetchedDocument, FetchError, set_http_client
 from adapters.randomness import set_randomness
@@ -34,6 +35,7 @@ from oauth.models import SigningKey
 from services.members import ExternalProfile, create_member
 from services.owner import create_owner
 from services.signing import create_signing_key
+from services.terms import agree_to_terms, current_documents
 from services.totp import current_code, enrollment_device
 
 if TYPE_CHECKING:
@@ -133,9 +135,13 @@ def make_member(
     email: str = MEMBER_EMAIL,
     email_verified: bool = True,
     name: str = MEMBER_NAME,
+    agreed: bool = True,
 ) -> User:
-    """A member account with one external identity (the login flow itself comes in #36)."""
-    return create_member(
+    """A member account with one external identity. `agreed` (the default) also has it agree
+    to the current terms (registering a first version of each document if there is none), so
+    it is 「활성」 and may get tokens; `agreed=False` leaves it 「동의 대기」 as a first social
+    login does."""
+    user = create_member(
         ExternalProfile(
             provider=provider,
             provider_sub=provider_sub,
@@ -144,6 +150,27 @@ def make_member(
             display_name=name,
         )
     )
+    documents = ensure_terms_documents()
+    if agreed:
+        agree_to_terms(user, document_ids=[d.pk for d in documents], age_confirmed=True)
+    return user
+
+
+TERMS_URL = "https://sandcorporation.github.io/privacy-and-terms/account/{kind}/"
+
+
+def ensure_terms_documents() -> list[TermsDocument]:
+    """A first version (in effect since 2020) of each terms document unless one exists."""
+    for kind in TermsDocument.Kind:
+        if not TermsDocument.objects.filter(kind=kind).exists():
+            TermsDocument.objects.create(
+                kind=kind,
+                version="2020-01",
+                effective_date=date(2020, 1, 1),
+                url=TERMS_URL.format(kind=kind.value),
+                created_at=timezone.now(),
+            )
+    return list(current_documents())
 
 
 @pytest.fixture

@@ -32,6 +32,7 @@ from services.members import (
     MEMBER,
     MemberClientRefused,
     MemberScopeRefused,
+    MemberTermsPending,
     check_member_grant,
     is_member,
 )
@@ -100,7 +101,7 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
             # Last line (ADR 0003): /authorize and /token checked already; never sign past it.
             try:
                 check_member_grant(user, client, granted)
-            except (MemberClientRefused, MemberScopeRefused) as error:
+            except (MemberClientRefused, MemberScopeRefused, MemberTermsPending) as error:
                 raise RuntimeError(f"refusing a member token: {error!r}") from error
         own = set(resource.scopes.filter(name__in=granted).values_list("name", flat=True))
         token = TokenResponse(

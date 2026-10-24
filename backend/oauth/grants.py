@@ -44,7 +44,12 @@ from oauth.tokens import (
     revoke_family,
 )
 from services import audit
-from services.members import MemberClientRefused, MemberScopeRefused, check_member_grant
+from services.members import (
+    MemberClientRefused,
+    MemberScopeRefused,
+    MemberTermsPending,
+    check_member_grant,
+)
 from services.oidc import LOGIN_INFO_SCOPES, OPENID, USERINFO_RESOURCE
 from services.signing import random_token
 
@@ -117,7 +122,9 @@ def requested_scopes(request: OAuth2Request, client: Client, resource: Resource)
 
 def member_authorization(user: User, client: Client, scopes: list[str]) -> None:
     """/authorize for a member (ADR 0003): `access_denied` from a client that does not allow
-    members, `invalid_scope` for any scope a member may not hold (`admin`, `editor`, ...)."""
+    members, `invalid_scope` for any scope a member may not hold (`admin`, `editor`, ...).
+    MemberTermsPending (#37) is not an OAuth error: it goes up to the view, which shows the
+    terms screen first."""
     try:
         check_member_grant(user, client, scopes)
     except MemberClientRefused:
@@ -130,10 +137,11 @@ def member_authorization(user: User, client: Client, scopes: list[str]) -> None:
 
 def member_token(user: User, client: Client, scopes: list[str]) -> None:
     """/token for a member: the same rules again (the client's mark may have been turned off
-    since the code or the refresh token was issued); any refusal is `invalid_grant`."""
+    since the code or the refresh token was issued, the terms may have a new version); any
+    refusal is `invalid_grant`."""
     try:
         check_member_grant(user, client, scopes)
-    except (MemberClientRefused, MemberScopeRefused):
+    except (MemberClientRefused, MemberScopeRefused, MemberTermsPending):
         raise InvalidGrantError("This grant is not available to member accounts here.") from None
 
 

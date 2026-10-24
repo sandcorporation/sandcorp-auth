@@ -39,6 +39,7 @@ from services.social import (
     unlink_identity,
 )
 from services.social_providers import SocialLoginFailed, SocialProvider, configured_providers
+from services.terms import needs_terms
 
 BACKEND = "django.contrib.auth.backends.ModelBackend"
 PENDING_SOCIAL_KEY = "accounts.social_pending"
@@ -72,6 +73,10 @@ def _login_url(next_url: str) -> str:
 def _sign_into(request: HttpRequest, user: User, next_url: str) -> HttpResponse:
     request.session.pop(PENDING_SIGNUP_KEY, None)
     login(request, user, backend=BACKEND)  # also sets last_login, the ID token's auth_time
+    if needs_terms(user):  # a new account, or a new version of the terms (#37)
+        return (
+            redirect("/terms?" + urlencode({"next": next_url})) if next_url else redirect("/terms")
+        )
     return redirect(next_url or "accounts:home")
 
 

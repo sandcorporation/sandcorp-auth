@@ -380,6 +380,7 @@ A1~A3 위반은 401 `invalid_token`. 대표 전용 기능(그 사이트의 관�
 
 - 「일반 사용자 허용」이 꺼진 클라이언트로 일반 사용자가 `/authorize`에 오면 동의 화면 없이 `redirect_uri?error=access_denied&state=…`로 돌아간다. 코드 교환·리프레시 사이에 표시가 꺼지면 `/token`이 400 `invalid_grant`.
 - 일반 사용자가 `login`·`openid`·`profile`·`email` 밖의 스코프(`admin`, `editor` 등)를 요청하면 `error=invalid_scope`로 돌아간다(빼고 발급하지 않는다).
+- 약관(#37): 현재 약관 버전에 동의하지 않은 일반 사용자(첫 가입, 또는 새 버전 시행 뒤)는 `/authorize`에서 auth의 동의 화면을 먼저 보고, 동의하면 같은 인가 요청으로 돌아온다 — 사이트는 할 일이 없다. 다만 새 버전이 시행되면 그 사용자의 코드 교환·리프레시가 400 `invalid_grant`가 되므로, 리프레시 실패 때 사이트는 로그인(`/authorize`)부터 다시 시작한다.
 
 참조 구현은 `backend/tests/reference_validator.py`의 `validate_account_access_token`(반환값 `acct`가 `"owner"` 또는 `"member"`), 시험은 `backend/tests/test_reference_validator.py`와 `backend/tests/test_members.py`.
 
