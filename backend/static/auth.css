@@ -12,7 +12,7 @@
 .auth-link-button { background: none; border: 0; padding: 0; font: inherit; font-size: .875rem; color: var(--color-muted); text-decoration: underline; text-underline-offset: .2em; cursor: pointer; }
 .auth-link-button:hover { color: var(--color-ink); }
 .auth-code { letter-spacing: .3em; text-align: center; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.auth-qr { background: var(--color-paper); border: 1px solid var(--color-line); padding: .5rem; text-align: center; }
+.auth-qr { color-scheme: only light; background: Canvas; color: CanvasText; border: 1px solid var(--color-line); padding: .5rem; text-align: center; } /* QR는 다크에서도 흰 바탕이어야 읽힌다(시스템 색 + 라이트 고정) */
 .auth-qr svg { width: 200px; height: 200px; margin: 0 auto; max-width: 100%; }
 .auth-secret { display: block; word-break: break-all; padding: .5rem; border: 1px dashed var(--color-line-strong); margin-top: .25rem; }
 .auth-check { display: grid; grid-template-columns: auto 1fr; gap: .25rem .75rem; align-items: start; padding: .9rem 0; border-bottom: 1px solid var(--color-line); }

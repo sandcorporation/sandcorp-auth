@@ -52,6 +52,8 @@ docker compose -p sandcorp-auth -f docker-compose.prod.yml -f docker-compose.ora
 
 compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운영 `0` 고정), `DJANGO_STATIC_ROOT`(이미지 기본값).
 
+화면 CSS(#38): sandcorp-design의 dist CSS는 `backend/static/design/sandcorp.css`로 저장소에 들어 있고(`make sync-design VERSION=…`), 이미지 빌드의 `collectstatic`이 모아 whitenoise가 `/static/design/sandcorp.css`·`/static/auth.css`로 내보낸다. 별도 운영 설정은 없다. CSP 헤더는 두지 않는다.
+
 **운영 `.env`에 넣지 않는 것**: `AUTHLIB_INSECURE_TRANSPORT`. http로 OAuth 요청을 받게 하는 스위치라 **로컬 확인 때만** 쓴다(8절).
 
 ## 2. 첫 배포
