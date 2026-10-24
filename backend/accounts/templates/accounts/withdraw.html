@@ -7,7 +7,7 @@
 {% if error %}<div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">탈퇴하지 않았습니다</span>{{ error }}</div>{% endif %}
 <ul class="sc-list" data-slot="withdraw-effects">
   <li><span>바로 로그아웃되고, 이 계정으로는 더 로그인할 수 없습니다.</span></li>
-  <li><span>{% if apps %}연결된 앱({{ apps|join:", " }})과의 연결이 모두 끊기고, 앱에 탈퇴 사실을 알립니다.{% else %}연결된 앱이 있었다면 연결이 끊기고, 앱에 탈퇴 사실을 알립니다.{% endif %}</span></li>
+  <li><span>{% if apps %}연결된 앱({{ apps|join:", " }})과의 연결이 모두 끊기고, 앱에 탈퇴 사실을 알립니다.{% else %}지금 연결된 앱은 없습니다. 예전에 연결했던 앱에는 탈퇴 사실을 알립니다.{% endif %}</span></li>
   <li><span>이메일·이름·로그인 연결 정보는 30일 뒤 삭제합니다. 그 사이에도 계정을 되살릴 수 없습니다.</span></li>
   <li><span>같은 Google·Kakao 계정으로 다시 오면 새 계정으로 가입합니다.</span></li>
 </ul>
