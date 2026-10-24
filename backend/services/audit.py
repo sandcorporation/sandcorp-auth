@@ -34,6 +34,11 @@ TOKEN_REFRESHED: Final = "token.refreshed"
 TOKEN_REUSE_DETECTED: Final = "token.reuse_detected"
 TOKEN_REVOKED: Final = "token.revoked"
 CONSENT_REVOKED: Final = "consent.revoked"
+SOCIAL_LOGIN_SUCCEEDED: Final = "login.social_succeeded"
+SOCIAL_LOGIN_FAILED: Final = "login.social_failed"
+MEMBER_CREATED: Final = "member.created"
+IDENTITY_LINKED: Final = "identity.linked"
+IDENTITY_UNLINKED: Final = "identity.unlinked"
 
 SECRET_KEYS: Final = frozenset({"password", "code", "token", "secret", "otp"})
 

@@ -1,0 +1,15 @@
+{% extends "accounts/base.html" %}
+{% block title %}로그인하지 못함{% endblock %}
+{% block content %}
+<h1>로그인하지 못했습니다</h1>
+{% if reason == "cancelled" %}
+<p class="lead">로그인을 취소했습니다.</p>
+{% elif reason == "locked" %}
+<div class="error" role="alert">로그인 시도가 너무 많습니다. 잠시 뒤 다시 시도하세요.</div>
+{% elif reason == "pending_login_expired" or reason == "no_pending_login" %}
+<p class="lead">로그인 시간이 지났습니다. 처음부터 다시 시도하세요.</p>
+{% else %}
+<div class="error" role="alert">로그인 제공자의 응답을 확인하지 못했습니다. 처음부터 다시 시도하세요.</div>
+{% endif %}
+<p><a href="{{ login_url }}">로그인 화면으로</a></p>
+{% endblock %}

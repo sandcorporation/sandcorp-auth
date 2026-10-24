@@ -25,11 +25,17 @@ class Member(models.Model):
     `username` is its opaque `sub` (`m_` + ULID), no password, never staff. The owner has no
     Member row. `email_verified` speaks for `User.email` (empty when there is none)."""
 
+    class Status(models.TextChoices):
+        # Made by a first social login; becomes active once the terms are agreed to (#37).
+        PENDING_TERMS = "pending_terms", "동의 대기"
+        ACTIVE = "active", "활성"
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="member"
     )
     created_at = models.DateTimeField()
     email_verified = models.BooleanField(default=False)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING_TERMS)
 
     def __str__(self) -> str:
         return f"일반 사용자 {self.user_id}"

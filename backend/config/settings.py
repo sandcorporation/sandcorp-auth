@@ -99,6 +99,13 @@ USE_TZ = True
 
 # The service's absolute base URL; later the JWT `iss`.
 SITE_URL = env("SITE_URL", "https://auth.sandcorp.co.kr").rstrip("/")
+
+# Social login (#36). A provider with an empty id or secret is off: no button, its routes 404.
+# Callback URIs to register: SITE_URL + /login/google/callback, /login/kakao/callback.
+GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET")
+KAKAO_CLIENT_ID = env("KAKAO_CLIENT_ID")  # Kakao "REST API key"
+KAKAO_CLIENT_SECRET = env("KAKAO_CLIENT_SECRET")
 # Fernet key that encrypts signing private keys at rest (see /.env.example for how to make one).
 SIGNING_KEY_ENCRYPTION_KEY = env("SIGNING_KEY_ENCRYPTION_KEY") or (
     "ZGV2LWluc2VjdXJlLXNpZ25pbmcta2V5LTMyYnl0ZXM=" if DEBUG else ""

@@ -46,6 +46,8 @@ docker compose -p sandcorp-auth -f docker-compose.prod.yml -f docker-compose.ora
 | `DB_NAME` | 선택 | 데이터베이스 이름(`utf8mb4` / `utf8mb4_0900_as_cs`로 만든 것) | 기본 `sandcorp_auth` |
 | `DB_USER` | 선택 | 그 데이터베이스에 전체 권한을 가진 서비스 계정 | 기본 `sandcorp_auth` |
 | `DB_PASSWORD` | 필수 | 그 계정의 비밀번호 | HeatWave에서 계정을 만들 때 정한 값 |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | 선택 | Google 로그인(일반 사용자) OAuth 클라이언트. 하나라도 비면 Google 버튼이 없고 `/login/google*`은 404 | 보류(9절) — 지금은 비워 둔다 |
+| `KAKAO_CLIENT_ID` / `KAKAO_CLIENT_SECRET` | 선택 | Kakao 로그인. `KAKAO_CLIENT_ID`는 「REST API 키」, 시크릿은 「Client Secret」 코드. 하나라도 비면 Kakao 버튼이 없다 | 9절 Kakao 절차(codemit과 같은 비즈 앱의 기존 키) |
 | `HTTP_BIND` / `HTTP_PORT` | 선택 | web을 묶을 호스트 주소·포트 | oracle 덮어쓰기 기본 `172.17.0.1` / `18093` |
 
 compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운영 `0` 고정), `DJANGO_STATIC_ROOT`(이미지 기본값).
@@ -318,3 +320,34 @@ rm .env
 ```
 
 이 절차를 처음 통과시킨 기록(DCR → 인가 → 동의 → 교환 → 리프레시 → 폐기 → admin 감사 로그)은 #12의 PR에 있다.
+
+## 9. 소셜 로그인(Google·Kakao) 콘솔 등록
+
+일반 사용자(ADR 0003)는 Google·Kakao로만 들어온다(#36). 콘솔 등록과 `.env` 값은 조율자가 넣고, 넣은 뒤 재배포한다. 키가 비어 있는 제공자는 버튼이 숨겨질 뿐 나머지는 그대로 돈다. 지금 운영은 Kakao만 켠다(Google 보류).
+
+콜백(Redirect) URI는 `SITE_URL` + 아래 경로다. 운영은 이 두 개를 그대로 등록한다.
+
+- Google: `https://auth.sandcorp.co.kr/login/google/callback`
+- Kakao: `https://auth.sandcorp.co.kr/login/kakao/callback`
+
+서비스는 두 제공자 모두 `state`(세션에 묶음, 10분·1회)와 PKCE S256을 쓰고, Google에는 `nonce`도 보낸다. Google `id_token`은 Google JWKS로 RS256 서명·`aud`(= `GOOGLE_CLIENT_ID`)·`iss`(`accounts.google.com`)·`exp`·`nonce`를 검사한다. Kakao는 액세스 토큰으로 `/v2/user/me`를 읽는다(OIDC 아님). 콜백 실패는 로그인 실패와 같은 IP 제한(`login`, 15분 5회)에 세고, 감사 로그 `login.social_failed`의 `reason`에 까닭이 남는다(`state_mismatch`·`id_token_nonce`·`id_token_aud`·`id_token_expired`·`google_token_status_400` 등). 사용자가 제공자 화면에서 취소한 것(`cancelled`)은 세지 않는다.
+
+### Google — 보류
+
+보류(2026-10-24 사용자 결정, Kakao 먼저). 어댑터·시험은 구현돼 있으나 `GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET`을 비워 두어 버튼·경로(`/login/google*` 404)가 꺼져 있다. 켤 때 콘솔 절차를 이 자리에 적는다(콜백 `https://auth.sandcorp.co.kr/login/google/callback`).
+
+### Kakao (Kakao Developers) — codemit과 같은 비즈 앱을 쓴다
+
+auth는 새 앱을 만들지 않고 codemit이 쓰는 **기존 카카오 비즈 앱**(표시 이름·아이콘 Sandcorp)을 공유한다. 카카오 회원번호(`id`)는 앱마다 다르므로, 같은 앱을 써야 나중에 codemit 회원을 auth로 옮길 때 같은 회원번호로 외부 신원을 이어 붙일 수 있다(외부 신원의 제공자 `sub` = 회원번호 10진 문자열). 기존 설정은 지우지 않고 더하기만 한다.
+
+1. (완료, 2026-10-24) **카카오 로그인 → Redirect URI**에 `https://auth.sandcorp.co.kr/login/kakao/callback` 추가. 이 경로는 코드에 고정돼 있으니 바꾸지 않는다(`SITE_URL` + `/login/kakao/callback`).
+2. (완료) **동의항목**: 닉네임·카카오계정(이메일) 「필수 동의」 확인. auth는 이 둘 말고는 읽지 않는다. 이메일이 없는 카카오 계정처럼 이메일이 오지 않아도 계정은 만들어진다(이메일 없음).
+3. Web 플랫폼 사이트 도메인 등록은 **필요 없다**(지금 카카오는 Redirect URI만으로 된다).
+4. 키는 **기존 비즈 앱 것을 재사용**한다: 앱 키의 **REST API 키** → `KAKAO_CLIENT_ID`, 보안의 **Client Secret** 코드 → `KAKAO_CLIENT_SECRET`. Client Secret은 **재발급하지 않는다**(재발급하면 codemit도 함께 바꿔야 한다).
+
+### 넣은 뒤 확인
+
+1. `.env`에 `KAKAO_CLIENT_ID`·`KAKAO_CLIENT_SECRET`을 넣고 재배포한다(Google 두 값은 비워 둔다).
+2. 일반 사용자를 허용한 클라이언트(`clients members --client-id <id> --allow`)의 `/authorize`로 가면 로그인 화면에 「Kakao로 계속하기」가 보인다(Google은 보류라 없다). 허용하지 않은 클라이언트나 `/login`을 바로 열면 비밀번호 폼만 보인다.
+3. 각 버튼으로 끝까지 로그인해 본 뒤 admin의 감사 로그에 `member.created`·`login.social_succeeded`가 남는지 본다. 실패하면 `login.social_failed`의 `reason`을 본다(`google_token_status_400`·`kakao_token_status_401`이면 대개 Redirect URI나 시크릿 불일치).
+

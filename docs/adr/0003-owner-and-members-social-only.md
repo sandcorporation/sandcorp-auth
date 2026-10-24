@@ -15,7 +15,7 @@ sandcorp-auth는 대표 한 명만 쓰는 인증 서비스였고, 사이트(port
 5. **member가 받을 수 있는 스코프는 `login`·`openid`·`profile`·`email`뿐**(`services.members.MEMBER_SCOPES`). `admin`·`editor`를 비롯한 다른 리소스 스코프를 요청하면 빼지 않고 **거부**한다(`/authorize`가 `error=invalid_scope`로 돌려보냄). 조용히 빼면 클라이언트가 기대와 다른 토큰을 받는다.
 6. **클라이언트 「일반 사용자 허용」(`Client.allows_members`, 기본 꺼짐).** 꺼진 클라이언트의 `/authorize`에 member 세션이 오면 동의·코드 없이 `error=access_denied`로 돌려보낸다(리다이렉트 URI가 검증된 뒤라 클라이언트로 돌아간다). admin 클라이언트 화면과 `manage.py clients members --client-id <id> --allow|--deny`(`create-confidential --allow-members`)로 켜고 끈다(감사 `client.members_changed`).
 7. **세 겹으로 막는다.** `/authorize`(5·6), `/token`(코드 교환·리프레시 때 같은 규칙을 다시 — 그 사이 표시를 끄면 `invalid_grant`), 토큰 생성기(`SandcorpTokenGenerator`, 어겨지면 서명하지 않고 예외). 그리고 기존 사이트는 T11로 member를 또 거른다.
-8. **member userinfo·ID 토큰**: `sub`, `acct`, `name`(표시 이름이 있을 때, `profile`), `email`·`email_verified`(이메일이 있을 때만, `email`; `email_verified`는 member 자신의 값 — Kakao 선택 동의로 이메일이 없으면 두 클레임 모두 없다). `preferred_username`은 주지 않는다(username이 불투명한 `sub`라서).
+8. **member userinfo·ID 토큰**: `sub`, `acct`, `name`(표시 이름이 있을 때, `profile`), `email`·`email_verified`(이메일이 있을 때만, `email`; `email_verified`는 member 자신의 값 — 이메일이 없으면 두 클레임 모두 없다 — Kakao는 codemit과 같은 비즈 앱을 공유해 이메일을 필수 동의로 받지만(2026-10-24 결정, `docs/operations.md` 9절), 이메일이 없는 카카오 계정은 여전히 이메일 없이 들어온다). `preferred_username`은 주지 않는다(username이 불투명한 `sub`라서).
 
 ## 결과
 

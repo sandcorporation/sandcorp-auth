@@ -1,0 +1,17 @@
+{% extends "accounts/base.html" %}
+{% block title %}연결된 로그인{% endblock %}
+{% block content %}
+<h1>연결된 로그인</h1>
+<p class="lead">이 Sandcorp 계정에 연결된 로그인입니다.</p>
+{% for message in messages %}<div class="{% if message.level_tag == 'error' %}error{% else %}note{% endif %}" role="status">{{ message }}</div>{% endfor %}
+<ul class="scopes" data-slot="identities">
+  {% for i in identities %}
+  <li><span class="resource-name">{{ i.label }}</span>{% if i.email %} <span class="scope-description">{{ i.email }}</span>{% endif %}
+    {% if can_unlink %}<form method="post" action="/account/identities/{{ i.pk }}/unlink">{% csrf_token %}<button type="submit" class="link">해제</button></form>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% for p in link_choices %}
+<form method="post" action="/account/identities/link/{{ p.name }}">{% csrf_token %}<button type="submit" class="secondary">{{ p.label }} 로그인 연결</button></form>
+{% endfor %}
+{% endblock %}
