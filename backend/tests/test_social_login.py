@@ -25,6 +25,7 @@ from tests.conftest import (
     FakeProviders,
     FrozenClock,
     authorize_query,
+    ensure_terms_documents,
     exchange_code,
     make_member,
     obtain_authorization_code,
@@ -106,6 +107,18 @@ def kakao_login(
     return callback(client, "kakao", query)
 
 
+def terms_url(next_url: str) -> str:
+    """Where a new account (or one behind on the terms) goes after signing in (#37)."""
+    return "/terms?" + urlencode({"next": next_url})
+
+
+def agree_to_terms(client: Client) -> None:
+    ensure_terms_documents()
+    page = client.get("/terms")
+    documents = [str(d.pk) for d in page.context["documents"]]
+    assert client.post("/terms", {"document": documents, "age_14": "on"}).status_code == 302
+
+
 def session_user(client: Client) -> User | None:
     user_id = client.session.get("_auth_user_id")
     return User.objects.filter(pk=user_id).first() if user_id else None
@@ -132,7 +145,7 @@ def test_first_google_login_makes_a_member_and_the_next_one_signs_into_it(
     response = callback(client, "google", query)
 
     assert response.status_code == 302
-    assert response["Location"] == next_url
+    assert response["Location"] == terms_url(next_url)  # a new account agrees first (#37)
     user = session_user(client)
     assert user is not None and user.username.startswith("m_")
     assert user.email == "new@example.com" and user.first_name == "새 회원"
@@ -161,6 +174,7 @@ def test_signed_in_member_gets_a_member_token_for_the_authorize_request(
     google_login(client, fake_providers, next_url)
     user = session_user(client)
     assert user is not None
+    agree_to_terms(client)
     code, verifier = obtain_authorization_code(client, members_app, scope="login")
     response = exchange_code(client, members_app, code, verifier)
     assert response.status_code == 200, response.content
@@ -172,7 +186,7 @@ def test_kakao_login_without_email(
     client: Client, fake_providers: FakeProviders, next_url: str
 ) -> None:
     response = kakao_login(client, fake_providers, next_url, kakao_user())
-    assert response.status_code == 302 and response["Location"] == next_url
+    assert response.status_code == 302 and response["Location"] == terms_url(next_url)
     identity = ExternalIdentity.objects.get(provider="kakao")
     assert identity.provider_sub == "4123456789"
     assert identity.display_name == "카카오회원"
@@ -375,7 +389,7 @@ def test_a_verified_email_of_another_account_shows_the_notice_first(
     assert "/login/google?" in page  # sign in with that login instead
 
     created = client.post("/signup/confirm")
-    assert created.status_code == 302 and created["Location"] == next_url
+    assert created.status_code == 302 and created["Location"] == terms_url(next_url)
     user = session_user(client)
     assert user is not None and user != member
     assert ExternalIdentity.objects.get(provider="kakao").user == user  # nothing merged
@@ -388,7 +402,7 @@ def test_an_unverified_email_shows_no_notice(
     response = google_login(
         client, fake_providers, next_url, email=MEMBER_EMAIL, email_verified=False
     )
-    assert response["Location"] == next_url
+    assert response["Location"] == terms_url(next_url)
     assert session_user(client) not in (None, member)
 
 

@@ -1,6 +1,6 @@
 from django.urls import path
 
-from accounts import social_views, views
+from accounts import social_views, terms_views, views
 
 app_name = "accounts"
 
@@ -11,6 +11,7 @@ urlpatterns = [
     path("login/<str:provider>", social_views.social_start, name="social_start"),
     path("login/<str:provider>/callback", social_views.social_callback, name="social_callback"),
     path("signup/confirm", social_views.signup_confirm, name="signup_confirm"),
+    path("terms", terms_views.terms, name="terms"),
     path("account/identities", social_views.identities, name="identities"),
     path("account/identities/link/<str:provider>", social_views.link_start, name="identity_link"),
     path(

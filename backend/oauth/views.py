@@ -18,6 +18,7 @@ from oauth.models import Client, Consent, Scope
 from oauth.server import SandcorpRevocationEndpoint, authorization_server_metadata, server
 from services import audit, throttle
 from services.consents import revoke_consent
+from services.members import MemberTermsPending
 from services.oidc import (
     USERINFO_RESOURCE,
     UserinfoTokenRejected,
@@ -141,6 +142,9 @@ def authorize(request: HttpRequest) -> HttpResponse:
         grant: SandcorpAuthorizationCodeGrant = server.get_consent_grant(request, end_user=user)
     except OAuth2Error as error:
         return _authorization_error(request, error)
+    except MemberTermsPending:
+        # A member must agree to the current terms first (#37); the screen comes back here.
+        return redirect("/terms?" + urlencode({"next": request.get_full_path()}))
     client: Client = grant.request.client
     consent = live_consent(user, client, grant.resource)
     ip = client_ip(request)

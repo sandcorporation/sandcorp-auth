@@ -136,8 +136,10 @@ compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운�
 | 리프레시 토큰 패밀리 폐기 | admin → 리프레시 토큰 패밀리(`/<admin>/oauth/refreshtokenfamily/`) → action 「선택한 패밀리 폐기」 | 그 패밀리의 리프레시 토큰이 모두 무효. 이미 나간 액세스 토큰은 만료(10분)까지 산다 |
 | 대표 이메일·이름(OIDC) | `manage owner set-email --email <주소>` · `manage owner set-name --name <이름>` | ID 토큰·userinfo의 `email`(+`email_verified`)·`name`. 비우면 클레임이 빠진다. oauth2-proxy는 email이 없으면 로그인을 막으므로 forward auth 전에 넣는다 |
 | 자원·스코프 추가 | admin → 자원(`/<admin>/oauth/resource/`) | 스코프는 자원 변경 화면 아래 인라인 |
+| 약관 새 버전 등록 | `manage terms add --kind terms|privacy --doc-version <이름> --effective YYYY-MM-DD --url <공개 주소>` 또는 admin → 약관 문서(`/<admin>/accounts/termsdocument/`) 「추가」 | 시행일이 되면 그 버전이 현재 버전이 되고, 아직 동의하지 않은 일반 사용자는 다음 로그인·`/authorize`에서 동의 화면을 본다(그 전까지 `/token`·리프레시도 `invalid_grant`). 등록한 버전은 고치거나 지울 수 없다. 감사 `terms.registered`. 10절 |
+| 약관 버전 목록 | `manage terms list` | `*`가 시행 중인 현재 버전 |
 
-`<admin>`은 `DJANGO_ADMIN_PATH` 값. admin은 이 서비스 로그인(비밀번호 + TOTP)을 거친다.
+`<admin>`은 `DJANGO_ADMIN_PATH` 값. admin은 이 서비스 로그인(비밀번호 + TOTP)을 거친다. `client_id`는 `-`로 시작할 수 있으므로 명령에는 `--client-id=<id>`처럼 `=`로 붙여 쓴다(띄우면 옵션으로 읽혀 「expected one argument」).
 
 ### 감사 로그
 
@@ -350,4 +352,26 @@ auth는 새 앱을 만들지 않고 codemit이 쓰는 **기존 카카오 비즈 
 1. `.env`에 `KAKAO_CLIENT_ID`·`KAKAO_CLIENT_SECRET`을 넣고 재배포한다(Google 두 값은 비워 둔다).
 2. 일반 사용자를 허용한 클라이언트(`clients members --client-id <id> --allow`)의 `/authorize`로 가면 로그인 화면에 「Kakao로 계속하기」가 보인다(Google은 보류라 없다). 허용하지 않은 클라이언트나 `/login`을 바로 열면 비밀번호 폼만 보인다.
 3. 각 버튼으로 끝까지 로그인해 본 뒤 admin의 감사 로그에 `member.created`·`login.social_succeeded`가 남는지 본다. 실패하면 `login.social_failed`의 `reason`을 본다(`google_token_status_400`·`kakao_token_status_401`이면 대개 Redirect URI나 시크릿 불일치).
+
+## 10. 약관 문서(#37)
+
+일반 사용자는 「Sandcorp 계정 이용약관」(`terms`)과 「개인정보 수집·이용」(`privacy`) 현재 버전에 모두 동의하고 만 14세 이상을 확인해야 「활성」이 되어 코드·토큰을 받는다(대표는 대상 아님). 동의는 사용자·문서 버전·시각·14세 확인으로 `accounts.TermsAgreement`에 남고, admin 「약관 동의」에서 읽기만 한다. 감사 `terms.agreed`.
+
+**종류마다 시행 중인 버전이 하나도 없으면 아무도 동의할 수 없어 일반 사용자 가입이 막힌다**(동의 화면이 503 「지금은 가입을 받을 수 없습니다」). 그래서 일반 사용자를 받는 클라이언트(`clients members --allow`)를 켜기 전에 첫 버전을 넣는다. 데이터 마이그레이션으로 넣지 않는 까닭: 문서 주소와 시행일은 privacy-and-terms에 본문이 게시된 뒤에야 정해지고, 운영자가 정하는 값이기 때문이다.
+
+본문은 `sandcorporation/privacy-and-terms`(GitHub Pages, 앱별 폴더 + 문서 이름 폴더, 같은 주소를 덮어쓰고 게시일은 본문에 적는다)에 먼저 게시한다. 이 서비스는 주소만 갖는다. 주소 형식은 그 저장소 관례대로 `https://sandcorporation.github.io/privacy-and-terms/account/terms/`·`…/account/privacy/`로 한다.
+
+```sh
+docker exec -it sandcorp-auth-web-1 python manage.py terms add --kind terms \
+  --doc-version 2026-11 --effective 2026-11-01 \
+  --url https://sandcorporation.github.io/privacy-and-terms/account/terms/
+docker exec -it sandcorp-auth-web-1 python manage.py terms add --kind privacy \
+  --doc-version 2026-11 --effective 2026-11-01 \
+  --url https://sandcorporation.github.io/privacy-and-terms/account/privacy/
+docker exec -it sandcorp-auth-web-1 python manage.py terms list   # 두 줄 모두 * 이면 된 것
+```
+
+- 버전 이름은 자유 문자열(종류마다 유일). 게시일과 맞춰 `YYYY-MM`을 권한다.
+- 약관을 바꿀 때: privacy-and-terms 본문(같은 주소)을 고치고 게시일을 바꾼 뒤, 새 버전을 시행일과 함께 등록한다. 시행일 전에는 옛 버전이 현재 버전이다. 시행일(Asia/Seoul 날짜)부터 기존 일반 사용자는 다시 동의할 때까지 새 토큰·리프레시를 받지 못한다 — 앱은 로그인으로 돌아오고, 로그인·`/authorize`가 동의 화면을 먼저 보인다.
+- 같은 주소를 덮어쓰므로 옛 버전의 본문은 privacy-and-terms의 git 기록이 원본이다.
 

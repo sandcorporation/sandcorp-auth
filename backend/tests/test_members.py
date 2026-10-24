@@ -382,13 +382,13 @@ def test_account_validator_takes_the_owner_only_by_owner_sub(
 
 def test_clients_command_turns_members_on_and_off(dcr_client: OAuthClient) -> None:
     out = io.StringIO()
-    call_command("clients", "members", "--client-id", dcr_client.client_id, "--allow", stdout=out)
+    call_command("clients", "members", f"--client-id={dcr_client.client_id}", "--allow", stdout=out)
     dcr_client.refresh_from_db()
     assert dcr_client.allows_members is True
     event = AuditEvent.objects.get(kind="client.members_changed")
     assert event.detail == {"client_id": dcr_client.client_id, "allows_members": True}
 
-    call_command("clients", "members", "--client-id", dcr_client.client_id, "--deny", stdout=out)
+    call_command("clients", "members", f"--client-id={dcr_client.client_id}", "--deny", stdout=out)
     dcr_client.refresh_from_db()
     assert dcr_client.allows_members is False
 

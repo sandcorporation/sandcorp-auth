@@ -21,6 +21,7 @@ from adapters.randomness import get_randomness
 from oauth.models import Client
 from services import audit
 from services.oidc import LOGIN_INFO_SCOPES
+from services.terms import needs_terms
 
 type AccountKind = Literal["owner", "member"]
 
@@ -42,6 +43,10 @@ class IdentityTaken(Exception):
 
 class MemberClientRefused(Exception):
     """The client does not allow members."""
+
+
+class MemberTermsPending(Exception):
+    """The member has not agreed to the current terms (or is still 「동의 대기」, #37)."""
 
 
 class MemberScopeRefused(Exception):
@@ -136,7 +141,8 @@ def member_email_verified(user: User) -> bool:
 
 def check_member_grant(user: User, client: Client, scopes: list[str]) -> None:
     """For a member: the client must allow members and every scope must be a member scope.
-    Raises MemberClientRefused / MemberScopeRefused; does nothing for the owner."""
+    and it must have agreed to the current terms (#37). Raises MemberClientRefused /
+    MemberScopeRefused / MemberTermsPending, in that order; does nothing for the owner."""
     if not is_member(user):
         return
     if not client.allows_members:
@@ -144,6 +150,8 @@ def check_member_grant(user: User, client: Client, scopes: list[str]) -> None:
     refused = sorted(set(scopes) - MEMBER_SCOPES)
     if refused:
         raise MemberScopeRefused(refused)
+    if needs_terms(user):
+        raise MemberTermsPending(user.username)
 
 
 def set_allows_members(client: Client, allowed: bool, *, actor: str, ip: str = "") -> None:
