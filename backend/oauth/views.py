@@ -239,7 +239,7 @@ def _consent_screen(
     context = {
         "client_name": client.name,
         "client_id": client.client_id if client.registered_via == Client.Via.CIMD else "",
-        "is_member": is_member(request.user),
+        "is_member": isinstance(request.user, User) and is_member(request.user),
         "shares": shares,
         "resource": grant.resource,
         "scopes": scopes,

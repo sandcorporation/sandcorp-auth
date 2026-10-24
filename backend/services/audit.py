@@ -39,6 +39,7 @@ SOCIAL_LOGIN_FAILED: Final = "login.social_failed"
 MEMBER_CREATED: Final = "member.created"
 IDENTITY_LINKED: Final = "identity.linked"
 IDENTITY_UNLINKED: Final = "identity.unlinked"
+MEMBER_EMAIL_CHANGED: Final = "member.email_changed"
 TERMS_REGISTERED: Final = "terms.registered"
 TERMS_AGREED: Final = "terms.agreed"
 

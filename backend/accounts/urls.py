@@ -12,7 +12,11 @@ urlpatterns = [
     path("login/<str:provider>/callback", social_views.social_callback, name="social_callback"),
     path("signup/confirm", social_views.signup_confirm, name="signup_confirm"),
     path("terms", terms_views.terms, name="terms"),
-    path("account/identities", social_views.identities, name="identities"),
+    path("account", social_views.account, name="account"),
+    # The old address of the same page (#36), kept so links and bookmarks still work.
+    path("account/identities", social_views.account, name="identities"),
+    path("account/email", social_views.set_email, name="account_email"),
+    path("account/apps/<int:client_pk>/disconnect", social_views.disconnect, name="app_disconnect"),
     path("account/identities/link/<str:provider>", social_views.link_start, name="identity_link"),
     path(
         "account/identities/<int:identity_id>/unlink",
