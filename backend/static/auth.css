@@ -36,3 +36,5 @@
 .auth-main .sc-list-meta, .auth-meta-text { word-break: break-all; }
 .auth-scope-name { font-family: var(--font-mono); }
 .auth-scope-desc { display: block; }
+.auth-account { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .25rem .75rem; padding-bottom: .75rem; border-bottom: 1px solid var(--color-line); }
+.auth-account form { margin: 0; }

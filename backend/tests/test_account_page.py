@@ -102,7 +102,9 @@ def test_member_consent_screen_says_what_the_app_sees(
     url = "/authorize?" + authorize_query(app, scope="openid profile email", resource=None)
     response = member_client.get(url)
     assert response.status_code == 200, response["Location"]
-    assert f"{app.name} 앱이 이메일·이름을 봅니다" in response.content.decode()
+    page = response.content.decode()
+    assert f"{app.name} 앱이 이메일·이름을 봅니다" in page
+    assert "대표 계정으로 아래 리소스" not in page and "다른 계정으로 로그인" in page
 
 
 def test_connected_app_is_listed_and_disconnect_revokes_consent(

@@ -268,3 +268,46 @@ def test_admin_marks_a_scope_and_refuses_admin(logged_in_client: Client, flow: R
     assert Scope.objects.get(resource=flow, name="flow.admin").members_allowed is True
     event = AuditEvent.objects.get(kind="scope.members_changed")
     assert event.detail == {"resource": FLOW, "scope": "flow.admin", "members_allowed": True}
+
+
+# --- consent screen wording and the "other account" link (#49) -----------------------------
+
+
+def test_member_consent_for_a_resource_scope_speaks_of_their_own_account(
+    member_client: Client, member: User, members_app: OAuthClient, flow: Resource
+) -> None:
+    use_https(member_client)
+    url = "/authorize?" + authorize_query(members_app, scope="flow.read", resource=FLOW)
+    page = member_client.get(url).content.decode()
+    assert "내 Sandcorp 계정으로 아래에 접근합니다" in page
+    assert "대표 계정으로 아래 리소스" not in page and "봅니다" not in page
+    assert f"{member.first_name}(으)로 로그인됨" in page and "다른 계정으로 로그인" in page
+
+
+def test_owner_consent_keeps_the_owner_wording(
+    logged_in_client: Client, dcr_client: OAuthClient
+) -> None:
+    use_https(logged_in_client)
+    url = "/authorize?" + authorize_query(dcr_client, scope="admin", resource=PORTFOLIO)
+    page = logged_in_client.get(url).content.decode()
+    assert "이 클라이언트가 대표 계정으로 아래 리소스에 접근하려고 합니다." in page
+    assert "farrar142(으)로 로그인됨" in page
+
+
+def test_other_account_logs_out_and_returns_to_the_same_authorize_request(
+    member_client: Client, members_app: OAuthClient, flow: Resource
+) -> None:
+    use_https(member_client)
+    url = "/authorize?" + authorize_query(members_app, scope="flow.read", resource=FLOW)
+    assert member_client.get(url).status_code == 200
+    response = member_client.post("/logout", {"next": url})
+    assert response.status_code == 302 and response["Location"] == url
+    assert "_auth_user_id" not in member_client.session
+    again = member_client.get(url)
+    assert again.status_code == 302 and again["Location"].startswith("/login")
+
+
+@pytest.mark.parametrize("target", ["//evil.test/x", "https://evil.test", "/\\evil.test", ""])
+def test_logout_next_only_accepts_internal_paths(member_client: Client, target: str) -> None:
+    response = member_client.post("/logout", {"next": target})
+    assert response.status_code == 302 and response["Location"] == reverse("accounts:login")
