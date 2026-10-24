@@ -32,6 +32,7 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 
 - 시험: `make test`. MySQL을 쓴다 — `make db`가 `mysql:26.10.0`(`utf8mb4_0900_as_cs`)을 `sandcorp-auth-dev` 프로젝트로 `127.0.0.1:15444`에 띄운다(`make test`가 알아서 부른다; 13306은 쓰지 않는다). 시험 설정 `config.test_settings`가 `DB_PORT=15444`를 기본으로 두고, 시험 DB `test_sandcorp_auth`도 as_cs로 만든다. 전체 약 3분 40초(비밀번호 해시가 대부분).
 - DB(ADR 0002, #30): MySQL 단일 백엔드, 드라이버 `mysqlclient`. 접속은 env `DB_HOST`·`DB_PORT`(기본 3306)·`DB_NAME`·`DB_USER`·`DB_PASSWORD`. 격리 수준은 Django 기본(READ COMMITTED) 그대로 둔다. MySQL에 없는 것 두 가지: 부분 유일 인덱스(「조건이 참인 행은 하나」는 `oauth/models.py`의 `_live_marker` 생성 칼럼 + 일반 유일 제약), 교착 없는 `INSERT IGNORE` 후 잠금(「없으면 넣고 잠근다」는 `bulk_create(update_conflicts=True, update_fields=[...])` upsert, `services/throttle.py`). 이런 코드를 더하면 `tests/test_concurrency.py`(스레드 8개·실제 연결, `transaction=True, serialized_rollback=True`)에 탐침을 더한다. `client_id`는 `ascii_bin` 칼럼이라 ASCII가 아닌 값은 DB에 묻기 전에 거른다(`find_client`, admin 검색은 `oauth/admin.py`의 `_ascii_safe`). 운영 데이터 이전 절차는 `docs/ops/db-migration.md`.
+- 디자인(#38): 화면은 sandcorp-design(`sc-` 접두 클래스, 토큰 `--color-*`)을 쓴다. `make sync-design VERSION=v0.3.1`이 dist CSS를 `backend/static/design/sandcorp.css`로 복사한다(커밋 대상, whitenoise가 `/static/design/sandcorp.css`로 내보낸다). 앱 CSS(`static/auth.css`)에는 원시 색을 쓰지 않고 토큰만 쓴다.
 - 린트: `make lint` (ruff format --check, ruff check). 고치기: `cd backend && uv run ruff format . && uv run ruff check --fix .`
 - 타입: `make typecheck` (mypy strict + django-stubs).
 - 전부: `make check` (= `lint typecheck test`).

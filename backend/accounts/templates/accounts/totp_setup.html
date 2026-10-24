@@ -2,16 +2,18 @@
 {% block title %}인증 앱 등록{% endblock %}
 {% block content %}
 <h1>인증 앱 등록</h1>
-<p class="lead">처음 로그인하려면 인증 앱(Google Authenticator, 1Password 등)을 등록해야 합니다. 등록을 마치기 전에는 다른 화면을 쓸 수 없습니다.</p>
-<div class="qr" aria-label="TOTP 등록 QR 코드">{{ qr_svg }}</div>
-<label>QR을 찍을 수 없으면 이 키를 직접 넣으세요 ({{ username }})</label>
-<code class="secret">{{ secret }}</code>
-{% if error %}<div class="error" role="alert" style="margin-top:16px">{{ error }}</div>{% endif %}
-<form method="post">
+<p class="auth-lead">처음 로그인하려면 인증 앱(Google Authenticator, 1Password 등)을 등록해야 합니다. 등록을 마치기 전에는 다른 화면을 쓸 수 없습니다.</p>
+<div class="auth-qr" aria-label="TOTP 등록 QR 코드">{{ qr_svg }}</div>
+<p class="sc-field-label auth-subtle">QR을 찍을 수 없으면 이 키를 직접 넣으세요 ({{ username }})</p>
+<code class="auth-secret">{{ secret }}</code>
+{% if error %}<div class="sc-alert sc-alert--error auth-alert auth-subtle" role="alert"><span class="sc-alert-title">코드가 맞지 않습니다</span>{{ error }}</div>{% endif %}
+<form method="post" class="auth-form">
   {% csrf_token %}
-  <label for="code">앱에 뜬 6자리 코드</label>
-  <input type="text" class="code" id="code" name="code" inputmode="numeric" pattern="[0-9 ]*" maxlength="7" autocomplete="one-time-code" required>
-  <button type="submit">등록하고 로그인</button>
+  <div class="sc-field{% if error %} sc-field--error{% endif %}">
+    <label class="sc-field-label" for="code">앱에 뜬 6자리 코드</label>
+    <input class="sc-input auth-code" type="text" id="code" name="code" inputmode="numeric" pattern="[0-9 ]*" maxlength="7" autocomplete="one-time-code" required{% if error %} aria-invalid="true"{% endif %}>
+  </div>
+  <button class="sc-btn sc-btn--accent sc-btn--block" type="submit">등록하고 로그인</button>
 </form>
-<form method="post" action="/logout">{% csrf_token %}<button type="submit" class="link">취소하고 로그아웃</button></form>
+<form method="post" action="/logout" class="auth-subtle">{% csrf_token %}<button type="submit" class="auth-link-button">취소하고 로그아웃</button></form>
 {% endblock %}

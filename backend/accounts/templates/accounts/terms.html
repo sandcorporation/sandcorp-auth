@@ -1,21 +1,25 @@
 {% extends "accounts/base.html" %}
 {% block title %}약관 동의{% endblock %}
+{% block masthead_meta %}가입{% endblock %}
 {% block content %}
 <h1>약관 동의</h1>
 {% if unavailable %}
-<p class="lead" data-slot="terms-unavailable">지금은 가입을 받을 수 없습니다. 잠시 뒤 다시 시도해 주세요.</p>
+<div class="sc-alert auth-alert" role="status" data-slot="terms-unavailable"><span class="sc-alert-title">안내</span>지금은 가입을 받을 수 없습니다. 잠시 뒤 다시 시도해 주세요.</div>
 {% else %}
-<p class="lead">Sandcorp 계정을 쓰려면 아래 필수 항목에 모두 동의해 주세요.</p>
-{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+<p class="auth-lead">Sandcorp 계정을 쓰려면 아래 필수 항목에 모두 동의해 주세요.</p>
+{% if error %}<div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">동의가 필요합니다</span>{{ error }}</div>{% endif %}
 <form method="post" action="/terms" data-slot="terms-form">
   {% csrf_token %}
   <input type="hidden" name="next" value="{{ next }}">
-  {% for d in documents %}
-  <label><input type="checkbox" name="document" value="{{ d.pk }}" required>
-    (필수) <a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.get_kind_display }}</a> 동의 <small>{{ d.version }} · {{ d.effective_date|date:"Y-m-d" }} 시행</small></label>
-  {% endfor %}
-  <label><input type="checkbox" name="age_14" required> (필수) 만 14세 이상입니다</label>
-  <button type="submit">동의하고 계속</button>
+  <div class="auth-checks">
+    {% for d in documents %}
+    <label class="auth-check"><input type="checkbox" name="document" value="{{ d.pk }}" required>
+      <span>(필수) <a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.get_kind_display }}</a> 동의</span>
+      <small>{{ d.version }} · {{ d.effective_date|date:"Y-m-d" }} 시행</small></label>
+    {% endfor %}
+    <label class="auth-check"><input type="checkbox" name="age_14" required> <span>(필수) 만 14세 이상입니다</span></label>
+  </div>
+  <button class="sc-btn sc-btn--accent sc-btn--block auth-subtle" type="submit">동의하고 계속</button>
 </form>
 {% endif %}
 {% endblock %}

@@ -184,7 +184,7 @@ def signup_confirm(request: HttpRequest) -> HttpResponse:
     query = urlencode({"next": next_url})
     labels = providers_with_email(profile)
     choices = [
-        {"label": p.label, "url": f"/login/{p.name}?{query}"}
+        {"name": p.name, "label": p.label, "url": f"/login/{p.name}?{query}"}
         for p in configured_providers().values()
         if p.label in labels
     ]

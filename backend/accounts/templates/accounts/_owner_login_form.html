@@ -1,0 +1,13 @@
+<form method="post" action="/login" class="auth-form">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ next }}">
+  <div class="sc-field">
+    <label class="sc-field-label" for="username">아이디</label>
+    <input class="sc-input" type="text" id="username" name="username" value="{{ username }}" autocomplete="username" autocapitalize="none" required{% if not social %} autofocus{% endif %}>
+  </div>
+  <div class="sc-field">
+    <label class="sc-field-label" for="password">비밀번호</label>
+    <input class="sc-input" type="password" id="password" name="password" autocomplete="current-password" required>
+  </div>
+  <button class="sc-btn sc-btn--accent sc-btn--block" type="submit">다음</button>
+</form>
