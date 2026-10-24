@@ -8,7 +8,7 @@
 </div>
 {% if client_id %}<p class="auth-meta-text">{{ client_id }}</p>{% endif %}
 {% if is_member and shares %}
-<h1>{{ client_name }}이(가) {{ shares|join:"·" }}을(를) 봅니다</h1>
+<h1>{{ client_name }} 앱이 {{ shares|join:"·" }}을 봅니다</h1>
 <p class="auth-lead">허락하면 로그인한 뒤 위 정보가 이 앱에 전달됩니다. 언제든 「내 계정」에서 연결을 끊을 수 있습니다.</p>
 {% else %}
 <h1>이 앱의 접근을 허락할까요?</h1>
