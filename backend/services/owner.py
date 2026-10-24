@@ -1,4 +1,5 @@
-"""The owner account: the single Django User. Created and reset by `manage.py owner`."""
+"""The owner account: the one Django User without a `Member` row (members are ADR 0003).
+Created and reset by `manage.py owner`."""
 
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
@@ -6,6 +7,7 @@ from django.core.validators import validate_email
 from django.db import transaction
 
 from accounts.models import TotpDevice
+from services.members import MEMBER_SUB_PREFIX
 
 
 class OwnerExists(Exception):
@@ -17,18 +19,20 @@ class NoOwner(Exception):
 
 
 def get_owner() -> User:
-    owner = User.objects.order_by("pk").first()
+    owner = User.objects.filter(member__isnull=True).order_by("pk").first()
     if owner is None:
         raise NoOwner("no owner account; run `manage.py owner create`")
     return owner
 
 
 def create_owner(username: str, password: str) -> User:
-    """Create the owner (staff + superuser, TOTP not enrolled). Raises OwnerExists, or
-    django ValidationError for a weak password."""
+    """Create the owner (staff + superuser, TOTP not enrolled). Raises OwnerExists, ValueError
+    for a username shaped like a member `sub`, or django ValidationError for a weak password."""
+    if username.startswith(MEMBER_SUB_PREFIX):
+        raise ValueError(f"the owner's username may not start with {MEMBER_SUB_PREFIX!r}")
     validate_password(password)
     with transaction.atomic():
-        if User.objects.select_for_update().exists():
+        if User.objects.select_for_update().filter(member__isnull=True).exists():
             raise OwnerExists("the owner account already exists")
         return User.objects.create_user(
             username, password=password, is_staff=True, is_superuser=True

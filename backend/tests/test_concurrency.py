@@ -5,8 +5,8 @@ These tests start N threads at a barrier; each thread has its own DB connection 
 real (`transaction=True`). They pin what the single-row rules must hold under concurrency on
 MySQL/InnoDB at READ COMMITTED: one active signing key, one live consent and one live refresh
 token family (unique indexes over generated marker columns, since MySQL has no partial
-indexes), throttle counters without deadlocks (upsert, not INSERT IGNORE), and one winner for an
-authorization code or a refresh token.
+indexes), one account per external identity (#35), throttle counters without deadlocks
+(upsert, not INSERT IGNORE), and one winner for an authorization code or a refresh token.
 """
 
 import threading
@@ -20,10 +20,12 @@ from django.contrib.auth.models import User
 from django.db import IntegrityError, connection
 from django.test import Client
 
+from accounts.models import ExternalIdentity
 from oauth.models import Client as OAuthClient
 from oauth.models import Consent, RefreshTokenFamily, Resource, SigningKey
 from oauth.tokens import live_family
 from services import throttle
+from services.members import ExternalProfile, IdentityTaken, create_member
 from services.signing import ActiveSigningKeyExists, create_signing_key
 from tests.conftest import (
     PORTFOLIO,
@@ -76,6 +78,19 @@ def test_concurrent_signing_key_creation_leaves_one_active_key() -> None:
     assert len(winners) == 1
     assert all(isinstance(r, ActiveSigningKeyExists | IntegrityError) for r in losers), losers
     assert SigningKey.objects.filter(active=True).count() == 1
+
+
+def test_concurrent_sign_ups_with_one_identity_make_one_member() -> None:
+    profile = ExternalProfile(provider="kakao", provider_sub="4242", display_name="동시")
+
+    results = race(lambda: create_member(profile))
+
+    winners = [r for r in results if isinstance(r, User)]
+    losers = [r for r in results if not isinstance(r, User)]
+    assert len(winners) == 1
+    assert all(isinstance(r, IdentityTaken) for r in losers), losers
+    assert ExternalIdentity.objects.count() == 1
+    assert User.objects.count() == 1  # the losers' half-made accounts were rolled back
 
 
 def _consent(owner: User, oauth_client: OAuthClient, resource: Resource) -> Consent:

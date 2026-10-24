@@ -5,6 +5,8 @@ Fake adapters get registered here as they appear: `frozen_clock`, `recording_ran
 `signing_key` gives a test an active token signing key.
 `owner` is the owner account (before TOTP enrollment); `logged_in_client` is a test client that
 finished password + TOTP (Django `login()` done), with `frozen_clock` running.
+`make_member()` makes a Sandcorp member account the way a social login will (#36); `member` is
+one with a Google identity, `member_client` a test client logged in as that member.
 """
 
 import hashlib
@@ -24,6 +26,7 @@ from adapters.http import FetchedDocument, FetchError, set_http_client
 from adapters.randomness import set_randomness
 from oauth.models import Client as OAuthClient
 from oauth.models import SigningKey
+from services.members import ExternalProfile, create_member
 from services.owner import create_owner
 from services.signing import create_signing_key
 from services.totp import current_code, enrollment_device
@@ -106,6 +109,43 @@ def logged_in_client(client: Client, owner: User, frozen_clock: FrozenClock) -> 
     used up: advance the clock 30 s before asking for another code."""
     client.post("/login", {"username": OWNER_USERNAME, "password": OWNER_PASSWORD})
     client.post("/totp/setup", {"code": totp_code(owner)})
+    return client
+
+
+MEMBER_NAME = "김회원"
+MEMBER_EMAIL = "member@example.com"
+
+
+def make_member(
+    provider: str = "google",
+    provider_sub: str = "108234567890123456789",
+    *,
+    email: str = MEMBER_EMAIL,
+    email_verified: bool = True,
+    name: str = MEMBER_NAME,
+) -> User:
+    """A member account with one external identity (the login flow itself comes in #36)."""
+    return create_member(
+        ExternalProfile(
+            provider=provider,
+            provider_sub=provider_sub,
+            email=email,
+            email_verified=email_verified,
+            display_name=name,
+        )
+    )
+
+
+@pytest.fixture
+def member(db: None) -> User:
+    """A member who signed up with Google (verified email, display name)."""
+    return make_member()
+
+
+@pytest.fixture
+def member_client(client: Client, member: User, frozen_clock: "FrozenClock") -> Client:
+    """A test client whose session is the member's (Django `login()` done)."""
+    client.force_login(member)
     return client
 
 

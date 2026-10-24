@@ -7,6 +7,7 @@ from django.conf import settings
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
+from django.core.exceptions import PermissionDenied
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.utils.safestring import mark_safe
@@ -133,6 +134,9 @@ def home_view(request: HttpRequest) -> HttpResponse:
 
 
 def admin_login_redirect(request: HttpRequest) -> HttpResponse:
-    """Replaces the Django admin login screen with this service's login."""
+    """Replaces the Django admin login screen with this service's login. A signed-in member
+    is not staff: 403 here, or /login would send it straight back (a redirect loop)."""
+    if request.user.is_authenticated:
+        raise PermissionDenied("the admin is for the owner only")
     next_url = safe_next(request, request.GET.get("next")) or "/" + settings.ADMIN_PATH
     return redirect("/login?" + urlencode({"next": next_url}))

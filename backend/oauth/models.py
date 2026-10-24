@@ -105,6 +105,13 @@ class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no
     registered_via = models.CharField(max_length=8, choices=Via.choices)
     created_at = models.DateTimeField()
     active = models.BooleanField(default=True)
+    # "Allows members" (ADR 0003): only then may a member's session get a code or a token here.
+    allows_members = models.BooleanField(
+        "일반 사용자 허용",
+        default=False,
+        help_text="켜면 대표 말고 일반 사용자(소셜 로그인 계정)도 이 클라이언트로 로그인한다. "
+        "일반 사용자는 login·openid·profile·email 스코프만 받는다.",
+    )
     # CIMD cache: when the document was fetched, until when it may be used without refetching,
     # and the document itself. Empty for DCR/admin clients.
     metadata_fetched_at = models.DateTimeField(null=True, blank=True)

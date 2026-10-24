@@ -28,6 +28,13 @@ from oauth.models import (
     Resource,
 )
 from services import audit
+from services.members import (
+    MEMBER,
+    MemberClientRefused,
+    MemberScopeRefused,
+    check_member_grant,
+    is_member,
+)
 from services.oidc import OPENID, issue_id_token
 from services.signing import random_token
 from services.tokens import issue_access_token
@@ -85,9 +92,16 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
         """`auth_time` (the owner's login) and `nonce` go into the ID token, which is made
         only when the scope has `openid`."""
         if not isinstance(user, User) or resource is None:
-            raise RuntimeError("an access token needs an owner and a resource (its audience)")
+            raise RuntimeError("an access token needs an account and a resource (its audience)")
         allowed: str = self.get_allowed_scope(client, scope)
         granted = allowed.split()
+        member = is_member(user)
+        if member:
+            # Last line (ADR 0003): /authorize and /token checked already; never sign past it.
+            try:
+                check_member_grant(user, client, granted)
+            except (MemberClientRefused, MemberScopeRefused) as error:
+                raise RuntimeError(f"refusing a member token: {error!r}") from error
         own = set(resource.scopes.filter(name__in=granted).values_list("name", flat=True))
         token = TokenResponse(
             access_token=issue_access_token(
@@ -95,6 +109,7 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
                 audience=resource.url,
                 client_id=client.client_id,
                 scopes=[name for name in granted if name in own],
+                acct=MEMBER if member else None,
             ),
             token_type="Bearer",
             expires_in=int(settings.ACCESS_TOKEN_LIFETIME.total_seconds()),

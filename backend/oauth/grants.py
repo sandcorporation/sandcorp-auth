@@ -23,7 +23,12 @@ comes back is reuse: the whole family is revoked. The family's resource is the o
 import hashlib
 
 from authlib.oauth2 import OAuth2Error, OAuth2Request
-from authlib.oauth2.rfc6749 import InvalidGrantError, InvalidRequestError, InvalidScopeError
+from authlib.oauth2.rfc6749 import (
+    AccessDeniedError,
+    InvalidGrantError,
+    InvalidRequestError,
+    InvalidScopeError,
+)
 from authlib.oauth2.rfc6749.grants import AuthorizationCodeGrant, RefreshTokenGrant
 from authlib.oauth2.rfc7636 import CodeChallenge
 from django.contrib.auth.models import User
@@ -39,6 +44,7 @@ from oauth.tokens import (
     revoke_family,
 )
 from services import audit
+from services.members import MemberClientRefused, MemberScopeRefused, check_member_grant
 from services.oidc import LOGIN_INFO_SCOPES, OPENID, USERINFO_RESOURCE
 from services.signing import random_token
 
@@ -109,6 +115,28 @@ def requested_scopes(request: OAuth2Request, client: Client, resource: Resource)
     return names
 
 
+def member_authorization(user: User, client: Client, scopes: list[str]) -> None:
+    """/authorize for a member (ADR 0003): `access_denied` from a client that does not allow
+    members, `invalid_scope` for any scope a member may not hold (`admin`, `editor`, ...)."""
+    try:
+        check_member_grant(user, client, scopes)
+    except MemberClientRefused:
+        raise AccessDeniedError("This client does not accept Sandcorp member accounts.") from None
+    except MemberScopeRefused as refused:
+        raise InvalidScopeError(
+            f"Scope '{' '.join(refused.scopes)}' is not available to member accounts."
+        ) from None
+
+
+def member_token(user: User, client: Client, scopes: list[str]) -> None:
+    """/token for a member: the same rules again (the client's mark may have been turned off
+    since the code or the refresh token was issued); any refusal is `invalid_grant`."""
+    try:
+        check_member_grant(user, client, scopes)
+    except (MemberClientRefused, MemberScopeRefused):
+        raise InvalidGrantError("This grant is not available to member accounts here.") from None
+
+
 def live_consent(user: User, client: Client, resource: Resource) -> Consent | None:
     return Consent.objects.filter(
         user=user, client=client, resource=resource, revoked_at__isnull=True
@@ -155,6 +183,8 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
             self.scopes = requested_scopes(self.request, self.request.client, self.resource)
             if len(str(self.request.payload.data.get("nonce") or "")) > NONCE_MAX_LENGTH:
                 raise InvalidRequestError(f"'nonce' is longer than {NONCE_MAX_LENGTH}.")
+            if isinstance(self.request.user, User):
+                member_authorization(self.request.user, self.request.client, self.scopes)
         except OAuth2Error as error:
             error.redirect_uri = redirect_uri
             raise
@@ -201,6 +231,7 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
         values: list[str] = self.request.payload.datalist.get("resource", [])
         if values and values != [code.resource.url]:
             raise InvalidTargetError("'resource' is not the resource of the authorization code.")
+        member_token(code.user, self.request.client, code.scope.split())
 
     def create_token_response(self) -> tuple[int, TokenResponse, Headers]:
         code: AuthorizationCode = self.request.authorization_code
@@ -265,6 +296,7 @@ class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no 
         values: list[str] = self.request.payload.datalist.get("resource", [])
         if values and values != [token.family.resource.url]:
             raise InvalidTargetError("'resource' is not the resource of the refresh token.")
+        member_token(token.family.user, client, token.scope.split())
 
     def authenticate_refresh_token(self, refresh_token: str) -> RefreshToken | None:
         client: Client = self.request.client

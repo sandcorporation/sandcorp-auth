@@ -19,6 +19,7 @@ from tests.reference_validator import (
     JwkSet,
     TokenRejected,
     validate_access_token,
+    validate_account_access_token,
     www_authenticate,
 )
 
@@ -282,3 +283,74 @@ def test_www_authenticate_header_values() -> None:
     assert www_authenticate(
         "https://news.sandcorp.co.kr", error="insufficient_scope", scope="admin"
     ) == ('Bearer error="insufficient_scope", scope="admin"')
+
+
+# --- sites that take members (§10: A1-A3 instead of T11) -----------------------------------
+
+MEMBER_SUB = "m_01JB2Z3Y4X5W6V7T8S9R0Q1P2N"
+
+
+def validate_account(
+    token: str, cache: JwksCache, clock: FrozenClock, *, scope: str = "login"
+) -> AccessToken:
+    return validate_account_access_token(
+        token, jwks=cache, audience=NEWS, owner_sub=OWNER, required_scope=scope, clock=clock
+    )
+
+
+def test_member_token_passes_the_account_rules(
+    signer: Signer, cache: JwksCache, frozen_clock: FrozenClock
+) -> None:
+    token = signer.token(sub=MEMBER_SUB, acct="member", scope="login")
+    verified = validate_account(token, cache, frozen_clock)
+    assert (verified.sub, verified.acct, verified.scopes) == (
+        MEMBER_SUB,
+        "member",
+        frozenset({"login"}),
+    )
+    with pytest.raises(TokenRejected):  # the owner-only rules (T11) still refuse it
+        validate(token, cache, frozen_clock, scope="login")
+
+
+def test_token_without_acct_is_the_owner_and_must_have_the_owner_sub(
+    signer: Signer, cache: JwksCache, frozen_clock: FrozenClock
+) -> None:
+    verified = validate_account(signer.token(scope="login"), cache, frozen_clock)
+    assert (verified.sub, verified.acct) == (OWNER, "owner")
+    with pytest.raises(TokenRejected):
+        validate_account(signer.token(sub=MEMBER_SUB, scope="login"), cache, frozen_clock)
+
+
+@pytest.mark.parametrize("acct", ["owner", "Member", "admin", "", 1, ["member"], None])
+def test_acct_other_than_member_is_rejected(
+    signer: Signer, cache: JwksCache, frozen_clock: FrozenClock, acct: object
+) -> None:
+    token = jwt.encode(
+        {
+            **jwt.decode(signer.token(scope="login"), options={"verify_signature": False}),
+            "acct": acct,
+        },
+        signer.private_key,
+        algorithm="EdDSA",
+        headers={"kid": signer.kid},
+    )
+    with pytest.raises(TokenRejected):
+        validate_account(token, cache, frozen_clock)
+
+
+@pytest.mark.parametrize(
+    "sub", [OWNER, "m_short", "m_01jb2z3y4x5w6v7t8s9r0q1p2n", "x" + MEMBER_SUB]
+)
+def test_member_token_needs_a_member_sub(
+    signer: Signer, cache: JwksCache, frozen_clock: FrozenClock, sub: str
+) -> None:
+    with pytest.raises(TokenRejected):
+        validate_account(signer.token(sub=sub, acct="member", scope="login"), cache, frozen_clock)
+
+
+def test_member_token_without_the_scope_is_insufficient(
+    signer: Signer, cache: JwksCache, frozen_clock: FrozenClock
+) -> None:
+    token = signer.token(sub=MEMBER_SUB, acct="member", scope="login")
+    with pytest.raises(InsufficientScope):
+        validate_account(token, cache, frozen_clock, scope="admin")

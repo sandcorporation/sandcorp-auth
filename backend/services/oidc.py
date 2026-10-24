@@ -9,7 +9,11 @@ response carries an `id_token` whose `aud` is the client.
 
 The ID token is signed like access tokens (the active Ed25519 key, `EdDSA`, header `kid`).
 No `at_hash`: OpenID Connect defines none for EdDSA. Claims are never made up: `name` only when
-the owner has one, `email`/`email_verified` only when the owner has an email.
+the account has one, `email`/`email_verified` only when it has an email.
+
+A member (ADR 0003) also gets `acct: "member"` in userinfo and the ID token (the owner gets no
+`acct`), no `preferred_username` (its username is the opaque `sub`), and `email_verified` as the
+member's own flag (a typed-in email is not verified).
 """
 
 from collections.abc import Collection
@@ -22,6 +26,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from django.conf import settings
 from django.contrib.auth.models import User
 
+from accounts.models import Member
 from adapters.clock import get_clock
 from services.signing import ALGORITHM, active_signing_key, published_jwks
 
@@ -45,6 +50,7 @@ CLAIMS_SUPPORTED: Final = [
 
 class IdentityClaims(TypedDict):
     sub: str
+    acct: NotRequired[str]
     name: NotRequired[str]
     preferred_username: NotRequired[str]
     email: NotRequired[str]
@@ -61,16 +67,20 @@ class IdTokenClaims(IdentityClaims):
 
 
 def identity_claims(user: User, scopes: Collection[str]) -> IdentityClaims:
-    """`sub` and what `scopes` allow of the owner's profile (userinfo and the ID token)."""
+    """`sub` and what `scopes` allow of the account's profile (userinfo and the ID token)."""
     claims = IdentityClaims(sub=user.get_username())
+    member = Member.objects.filter(user_id=user.pk).first()
+    if member is not None:
+        claims["acct"] = "member"
     if "profile" in scopes:
-        claims["preferred_username"] = user.get_username()
+        if member is None:
+            claims["preferred_username"] = user.get_username()
         name = user.get_full_name()
         if name:
             claims["name"] = name
     if "email" in scopes and user.email:
         claims["email"] = user.email
-        claims["email_verified"] = True
+        claims["email_verified"] = True if member is None else member.email_verified
     return claims
 
 
@@ -94,6 +104,8 @@ def issue_id_token(
         exp=iat + int(settings.ACCESS_TOKEN_LIFETIME.total_seconds()),
         auth_time=int(auth_time.timestamp()),
     )
+    if "acct" in identity:
+        claims["acct"] = identity["acct"]
     if "name" in identity:
         claims["name"] = identity["name"]
     if "preferred_username" in identity:

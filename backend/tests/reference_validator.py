@@ -1,12 +1,16 @@
-"""Reference access-token validator for the resource servers (portfolio, news).
+"""Reference access-token validator for the resource servers (portfolio, news, and sites
+that take Sandcorp members).
 
 This file implements docs/resource-server-token-validation.md rule for rule, with plain PyJWT
-and no Django, so the two sites can copy it. When the rules change, change both together.
+and no Django, so the sites can copy it. When the rules change, change both together.
+`validate_access_token` is the owner-only rule set (T11, §3); `validate_account_access_token`
+is the rule set for sites that take members (A1-A3 instead of T11, §10).
 
 Injected: `fetch_jwks` (GET https://auth.sandcorp.co.kr/.well-known/jwks.json, parsed JSON)
 and `clock` (anything with `now() -> aware datetime`).
 """
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,6 +26,8 @@ JWKS_TTL_SECONDS = 600
 JWKS_MIN_REFETCH_SECONDS = 60
 EXP_LEEWAY_SECONDS = 30
 REQUIRED_CLAIMS = ["iss", "sub", "aud", "exp", "iat", "jti", "client_id", "scope"]
+ACCOUNT_KIND_CLAIM = "acct"
+MEMBER_SUB = re.compile(r"m_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 
 
 class Clock(Protocol):
@@ -61,6 +67,7 @@ class AccessToken:
     jti: str
     iat: int
     exp: int
+    acct: Literal["owner", "member"] = "owner"
 
 
 class JwksCache:
@@ -123,6 +130,59 @@ def validate_access_token(
     clock: Clock,
 ) -> AccessToken:
     """Return the verified token, or raise TokenRejected (401) / InsufficientScope (403)."""
+    verified = _verify(token, jwks=jwks, audience=audience, clock=clock)
+    if verified.sub != owner_sub:  # T11
+        raise TokenRejected("not the owner")
+    return _with_scope(verified, required_scope)
+
+
+def validate_account_access_token(
+    token: str,
+    *,
+    jwks: JwksCache,
+    audience: str,
+    owner_sub: str,
+    required_scope: str,
+    clock: Clock,
+) -> AccessToken:
+    """For a site that takes members as well as the owner (§10): T1-T10, then A1-A3 in place of
+    T11, then S1. The returned `acct` says which kind of account the token is for."""
+    verified, claims = _verify_with_claims(token, jwks=jwks, audience=audience, clock=clock)
+    if ACCOUNT_KIND_CLAIM not in claims:  # A1: no `acct` is an owner token
+        if verified.sub != owner_sub:
+            raise TokenRejected("not the owner")
+        return _with_scope(verified, required_scope)
+    if claims[ACCOUNT_KIND_CLAIM] != "member":  # A2
+        raise TokenRejected("unknown account kind")
+    if MEMBER_SUB.fullmatch(verified.sub) is None:  # A3
+        raise TokenRejected("not a member sub")
+    member = AccessToken(
+        sub=verified.sub,
+        client_id=verified.client_id,
+        scopes=verified.scopes,
+        jti=verified.jti,
+        iat=verified.iat,
+        exp=verified.exp,
+        acct="member",
+    )
+    return _with_scope(member, required_scope)
+
+
+def _with_scope(verified: AccessToken, required_scope: str) -> AccessToken:
+    if required_scope not in verified.scopes:  # S1
+        raise InsufficientScope(required_scope)
+    return verified
+
+
+def _verify(token: str, *, jwks: JwksCache, audience: str, clock: Clock) -> AccessToken:
+    verified, _ = _verify_with_claims(token, jwks=jwks, audience=audience, clock=clock)
+    return verified
+
+
+def _verify_with_claims(
+    token: str, *, jwks: JwksCache, audience: str, clock: Clock
+) -> tuple[AccessToken, dict[str, object]]:
+    """T1-T10: the token is ours, for `audience`, and not expired. Scope not checked yet."""
     try:
         header = jwt.get_unverified_header(token)
     except jwt.InvalidTokenError as exc:
@@ -167,13 +227,10 @@ def validate_access_token(
         raise TokenRejected("wrong audience")
     if clock.now().timestamp() > exp + EXP_LEEWAY_SECONDS:
         raise TokenRejected("expired")
-    if sub != owner_sub:
-        raise TokenRejected("not the owner")
 
     scopes = frozenset(scope.split(" ")) - {""}
-    if required_scope not in scopes:
-        raise InsufficientScope(required_scope)
-    return AccessToken(sub=sub, client_id=client_id, scopes=scopes, jti=jti, iat=iat, exp=exp)
+    verified = AccessToken(sub=sub, client_id=client_id, scopes=scopes, jti=jti, iat=iat, exp=exp)
+    return verified, claims
 
 
 def www_authenticate(
