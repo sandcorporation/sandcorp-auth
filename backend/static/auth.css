@@ -1,0 +1,38 @@
+/* 인증 화면 배치. sandcorp-design(design/sandcorp.css) 위에 얹는다. 색은 토큰(--color-*)만 쓴다. */
+.auth-main { max-width: 28rem; margin: 0 auto; padding: calc(var(--section-gap) * .6) var(--gutter) var(--section-gap); word-break: keep-all; overflow-wrap: anywhere; }
+.auth-main h1 { font-size: 1.75rem; font-weight: 700; margin: .5rem 0 .75rem; }
+.auth-lead { color: var(--color-muted); margin-bottom: 1.5rem; }
+.auth-stack { display: grid; gap: .75rem; }
+.auth-stack > * { margin: 0; }
+.auth-form { margin-top: 1.5rem; }
+.auth-form .sc-btn { margin-top: 1.5rem; }
+.auth-alert { margin-bottom: 1.25rem; }
+.auth-divider { margin: 1.5rem 0 .75rem; }
+.auth-subtle { margin-top: 1rem; }
+.auth-link-button { background: none; border: 0; padding: 0; font: inherit; font-size: .875rem; color: var(--color-muted); text-decoration: underline; text-underline-offset: .2em; cursor: pointer; }
+.auth-link-button:hover { color: var(--color-ink); }
+.auth-code { letter-spacing: .3em; text-align: center; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.auth-qr { color-scheme: only light; background: Canvas; color: CanvasText; border: 1px solid var(--color-line); padding: .5rem; text-align: center; } /* QR는 다크에서도 흰 바탕이어야 읽힌다(시스템 색 + 라이트 고정) */
+.auth-qr svg { width: 200px; height: 200px; margin: 0 auto; max-width: 100%; }
+.auth-secret { display: block; word-break: break-all; padding: .5rem; border: 1px dashed var(--color-line-strong); margin-top: .25rem; }
+.auth-check { display: grid; grid-template-columns: auto 1fr; gap: .25rem .75rem; align-items: start; padding: .9rem 0; border-bottom: 1px solid var(--color-line); }
+.auth-check input { width: 1.25rem; height: 1.25rem; margin: .2rem 0 0; accent-color: var(--color-accent); }
+.auth-check small { grid-column: 2; color: var(--color-muted); font-family: var(--font-mono); font-size: var(--text-label); }
+.auth-checks { border-top: 1px solid var(--color-line-strong); margin-top: 1rem; }
+.auth-details summary { cursor: pointer; font-size: .875rem; color: var(--color-muted); }
+.auth-details[open] summary { margin-bottom: .75rem; color: var(--color-ink); }
+.auth-app { display: flex; align-items: center; gap: .9rem; margin: 1rem 0 1.25rem; }
+.auth-app-icon { flex: none; width: 3rem; height: 3rem; display: grid; place-items: center; border: 1px solid var(--color-line-strong); background: var(--color-tint); color: var(--color-ink); font-weight: 700; font-size: 1.25rem; }
+.auth-app-icon img { width: 100%; height: 100%; object-fit: cover; }
+.auth-app-name { color: var(--color-ink); font-weight: 700; font-size: 1.125rem; }
+.auth-decision { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-top: 1.5rem; }
+.auth-note { color: var(--color-muted); font-size: .875rem; margin-top: 1rem; }
+.auth-section { margin-top: 2.5rem; }
+.auth-section h2 { font-size: 1.25rem; margin-bottom: .75rem; }
+.auth-inline { display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline; }
+.auth-row-actions { display: flex; gap: .5rem; align-items: center; }
+.auth-meta-text { color: var(--color-muted); font-size: .875rem; }
+
+.auth-main .sc-list-meta, .auth-meta-text { word-break: break-all; }
+.auth-scope-name { font-family: var(--font-mono); }
+.auth-scope-desc { display: block; }

@@ -1,0 +1,68 @@
+{% extends "accounts/base.html" %}
+{% block title %}내 계정{% endblock %}
+{% block masthead_meta %}내 계정{% endblock %}
+{% block content %}
+<h1>내 계정</h1>
+<p class="auth-lead">{% if display_name %}{{ display_name }} 님의 Sandcorp 계정입니다.{% else %}Sandcorp 계정 설정입니다.{% endif %}</p>
+{% for message in messages %}
+<div class="sc-alert{% if message.level_tag == 'error' %} sc-alert--error{% endif %} auth-alert" role="{% if message.level_tag == 'error' %}alert{% else %}status{% endif %}">{{ message }}</div>
+{% endfor %}
+
+<section class="auth-section" data-slot="identities">
+  <h2>로그인 수단</h2>
+  <ul class="sc-list">
+    {% for i in identities %}
+    <li>
+      <span><span class="sc-list-title">{{ i.label }}</span>{% if i.email %} <span class="auth-meta-text">{{ i.email }}</span>{% endif %}</span>
+      {% if can_unlink %}<form method="post" action="/account/identities/{{ i.pk }}/unlink">{% csrf_token %}<button type="submit" class="sc-btn sc-btn--sm sc-btn--secondary">해제</button></form>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if link_choices %}
+  <div class="auth-inline auth-subtle">
+    {% for p in link_choices %}
+    <form method="post" action="/account/identities/link/{{ p.name }}">{% csrf_token %}<button type="submit" class="sc-btn sc-btn--sm sc-btn--secondary">{{ p.label }} 로그인 연결</button></form>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="auth-section" data-slot="email">
+  <h2>이메일</h2>
+  <form method="post" action="/account/email">
+    {% csrf_token %}
+    <div class="sc-field">
+      <label class="sc-field-label" for="email">계정 이메일</label>
+      <input class="sc-input" type="email" id="email" name="email" value="{{ email }}" autocomplete="email" required aria-describedby="email-hint">
+      <span class="sc-field-hint" id="email-hint">{% if not email %}등록된 이메일이 없습니다. 앱이 이메일을 요청하면 이 주소가 전달됩니다.{% elif email_verified %}로그인 제공자가 확인한 주소입니다. 바꾸면 확인되지 않은 주소로 저장됩니다.{% else %}직접 입력한 주소입니다(확인되지 않음).{% endif %}</span>
+    </div>
+    <button class="sc-btn auth-subtle" type="submit">이메일 저장</button>
+  </form>
+</section>
+
+<section class="auth-section" data-slot="apps">
+  <h2>연결된 앱</h2>
+  {% if apps %}
+  <ul class="sc-list">
+    {% for a in apps %}
+    <li>
+      <span><span class="sc-list-title">{{ a.name }}</span>
+        <span class="auth-meta-text auth-scope-desc">{% if a.shares %}{{ a.shares|join:"·" }} 제공 · {% endif %}{{ a.since|date:"Y-m-d" }} 연결</span></span>
+      <form method="post" action="/account/apps/{{ a.client_id }}/disconnect">{% csrf_token %}<button type="submit" class="sc-btn sc-btn--sm sc-btn--secondary" aria-label="{{ a.name }} 연결 끊기">연결 끊기</button></form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="auth-meta-text">연결된 앱이 없습니다.</p>
+  {% endif %}
+</section>
+
+<section class="auth-section" data-slot="withdraw">
+  <h2>계정 탈퇴</h2>
+  <p class="auth-meta-text">탈퇴하면 이 계정으로는 더 로그인할 수 없습니다.</p>
+  <button class="sc-btn sc-btn--secondary auth-subtle" type="button" disabled aria-describedby="withdraw-note">탈퇴하기</button>
+  <p class="auth-meta-text" id="withdraw-note">탈퇴 기능은 준비 중입니다.</p>
+</section>
+
+<form method="post" action="/logout" class="auth-section">{% csrf_token %}<button type="submit" class="auth-link-button">로그아웃</button></form>
+{% endblock %}

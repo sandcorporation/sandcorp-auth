@@ -438,7 +438,7 @@ def test_a_member_links_another_login(
     member_client: Client, fake_providers: FakeProviders, member: User
 ) -> None:
     response = link(member_client, fake_providers, "kakao")
-    assert response.status_code == 302 and response["Location"] == "/account/identities"
+    assert response.status_code == 302 and response["Location"] == "/account"
     assert sorted(member.identities.values_list("provider", flat=True)) == ["google", "kakao"]
     assert session_user(member_client) == member
     assert AuditEvent.objects.filter(kind=audit.IDENTITY_LINKED, actor=member.username).exists()

@@ -2,13 +2,15 @@
 {% block title %}인증 코드{% endblock %}
 {% block content %}
 <h1>인증 코드</h1>
-<p class="lead">인증 앱에 뜬 6자리 코드를 넣어 주세요.</p>
-{% if error %}<div class="error" role="alert">{{ error }}</div>{% endif %}
-<form method="post">
+<p class="auth-lead">인증 앱에 뜬 6자리 코드를 넣어 주세요.</p>
+{% if error %}<div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">코드가 맞지 않습니다</span>{{ error }}</div>{% endif %}
+<form method="post" class="auth-form">
   {% csrf_token %}
-  <label for="code">코드</label>
-  <input type="text" class="code" id="code" name="code" inputmode="numeric" pattern="[0-9 ]*" maxlength="7" autocomplete="one-time-code" required autofocus>
-  <button type="submit">로그인</button>
+  <div class="sc-field{% if error %} sc-field--error{% endif %}">
+    <label class="sc-field-label" for="code">코드</label>
+    <input class="sc-input auth-code" type="text" id="code" name="code" inputmode="numeric" pattern="[0-9 ]*" maxlength="7" autocomplete="one-time-code" required autofocus{% if error %} aria-invalid="true"{% endif %}>
+  </div>
+  <button class="sc-btn sc-btn--accent sc-btn--block" type="submit">로그인</button>
 </form>
-<form method="post" action="/logout">{% csrf_token %}<button type="submit" class="link">처음으로</button></form>
+<form method="post" action="/logout" class="auth-subtle">{% csrf_token %}<button type="submit" class="auth-link-button">처음으로</button></form>
 {% endblock %}

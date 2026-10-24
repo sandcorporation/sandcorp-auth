@@ -13,7 +13,10 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
+from django.db.models.functions import Lower
 
 from accounts.models import ExternalIdentity, Member
 from adapters.clock import get_clock
@@ -169,3 +172,41 @@ def record_members_changed(client: Client, *, actor: str, ip: str = "") -> None:
         ip=ip,
         detail={"client_id": client.client_id, "allows_members": client.allows_members},
     )
+
+
+EMAIL_MAX_LENGTH: Final = 254  # django.contrib.auth User.email
+
+
+class InvalidEmail(Exception):
+    pass
+
+
+class EmailTaken(Exception):
+    pass
+
+
+def set_member_email(user: User, email: str, *, ip: str = "") -> None:
+    """The member types (or changes) their account email on 「내 계정」: it is theirs, not the
+    provider's word, so it is kept unverified. Raises InvalidEmail, EmailTaken (another member
+    has it). Callers pass members only."""
+    cleaned = email.strip()
+    try:
+        validate_email(cleaned)
+    except ValidationError as error:
+        raise InvalidEmail(cleaned) from error
+    if len(cleaned) > EMAIL_MAX_LENGTH:
+        raise InvalidEmail(cleaned)
+    with transaction.atomic():
+        User.objects.select_for_update().filter(pk=user.pk).first()
+        taken = (
+            User.objects.alias(e=Lower("email"))
+            .filter(e=cleaned.lower(), member__isnull=False)
+            .exclude(pk=user.pk)
+            .exists()
+        )
+        if taken:
+            raise EmailTaken(cleaned)
+        user.email = cleaned
+        user.save(update_fields=["email"])
+        Member.objects.filter(user_id=user.pk).update(email_verified=False)
+    audit.record(audit.MEMBER_EMAIL_CHANGED, actor=user.get_username(), ip=ip)

@@ -18,7 +18,7 @@ from oauth.models import Client, Consent, Scope
 from oauth.server import SandcorpRevocationEndpoint, authorization_server_metadata, server
 from services import audit, throttle
 from services.consents import revoke_consent
-from services.members import MemberTermsPending
+from services.members import MemberTermsPending, is_member
 from services.oidc import (
     USERINFO_RESOURCE,
     UserinfoTokenRejected,
@@ -230,9 +230,17 @@ def _consent_screen(
         {"name": name, "description": descriptions[name], "granted": name in granted}
         for name in grant.scopes
     ]
+    # What a member's app sees, in plain words ("<app> sees your email and name").
+    shares = [
+        label
+        for scope, label in (("email", "이메일"), ("profile", "이름"))
+        if scope in grant.scopes
+    ]
     context = {
         "client_name": client.name,
         "client_id": client.client_id if client.registered_via == Client.Via.CIMD else "",
+        "is_member": isinstance(request.user, User) and is_member(request.user),
+        "shares": shares,
         "resource": grant.resource,
         "scopes": scopes,
         "redirect_host": urlsplit(grant.redirect_uri).netloc,

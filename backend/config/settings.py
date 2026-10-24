@@ -172,6 +172,7 @@ ADMIN_PATH = env("DJANGO_ADMIN_PATH", "admin/").strip("/") + "/"
 
 # Static files: whitenoise serves the collectstatic output (Django admin).
 STATIC_URL = "/static/"
+STATICFILES_DIRS = [BASE_DIR / "static"]  # sandcorp-design CSS (make sync-design)
 STATIC_ROOT = Path(env("DJANGO_STATIC_ROOT", str(BASE_DIR / "staticfiles")))
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},

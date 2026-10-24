@@ -1,8 +1,7 @@
 """Social login screens (#36): start, provider callback, the same-email notice, and the member's
-list of linked social logins (link / unlink). Rules are in `services/social.py`; this module only
-keeps the in-between state in the session and picks the screen.
-
-Minimal templates for now; the design comes with the screens ticket (#38).
+「내 계정」 page (linked social logins, email, connected apps). Rules are in
+`services/social.py`; this module only keeps the in-between state in the session and picks
+the screen.
 """
 
 from urllib.parse import urlencode
@@ -20,8 +19,17 @@ from accounts.models import ExternalIdentity
 from accounts.session import safe_next
 from core.http import client_ip
 from services import audit, throttle
+from services.consents import connected_apps, disconnect_app
 from services.login import IP_RULE
-from services.members import ExternalProfile, IdentityTaken, is_member
+from services.members import (
+    EmailTaken,
+    ExternalProfile,
+    IdentityTaken,
+    InvalidEmail,
+    is_member,
+    member_email_verified,
+    set_member_email,
+)
 from services.social import (
     IdentityNotFound,
     LastIdentity,
@@ -163,7 +171,7 @@ def _finish_link(
             messages.success(request, f"{label} 로그인을 연결했습니다.")
         else:
             messages.info(request, f"{label} 로그인은 이미 이 계정에 연결되어 있습니다.")
-    return redirect("accounts:identities")
+    return redirect("accounts:account")
 
 
 @require_http_methods(["GET", "POST"])
@@ -184,7 +192,7 @@ def signup_confirm(request: HttpRequest) -> HttpResponse:
     query = urlencode({"next": next_url})
     labels = providers_with_email(profile)
     choices = [
-        {"label": p.label, "url": f"/login/{p.name}?{query}"}
+        {"name": p.name, "label": p.label, "url": f"/login/{p.name}?{query}"}
         for p in configured_providers().values()
         if p.label in labels
     ]
@@ -206,13 +214,16 @@ def _member_or_403(request: HttpRequest) -> User:
 
 @login_required
 @require_GET
-def identities(request: HttpRequest) -> HttpResponse:
-    """The member's linked social logins, with link and unlink buttons (a minimal stand-in for
-    the 「내 계정」 page of #38)."""
+def account(request: HttpRequest) -> HttpResponse:
+    """「내 계정」: the member's sign-in methods (link / unlink), account email, connected apps
+    (disconnect) and the way into withdrawal (#39)."""
     user = _member_or_403(request)
     linked = list(ExternalIdentity.objects.filter(user_id=user.pk).order_by("linked_at", "pk"))
     linked_providers = {identity.provider for identity in linked}
     context = {
+        "display_name": user.first_name,
+        "email": user.email,
+        "email_verified": member_email_verified(user),
         "identities": [
             {"pk": i.pk, "label": i.get_provider_display(), "email": i.email} for i in linked
         ],
@@ -222,8 +233,35 @@ def identities(request: HttpRequest) -> HttpResponse:
             for p in configured_providers().values()
             if p.name not in linked_providers
         ],
+        "apps": connected_apps(user),
     }
-    return render(request, "accounts/identities.html", context)
+    return render(request, "accounts/account.html", context)
+
+
+@login_required
+@require_POST
+def set_email(request: HttpRequest) -> HttpResponse:
+    user = _member_or_403(request)
+    try:
+        set_member_email(user, request.POST.get("email", ""), ip=client_ip(request))
+    except InvalidEmail:
+        messages.error(request, "이메일 주소 형식이 맞지 않습니다.")
+    except EmailTaken:
+        messages.error(request, "이미 다른 계정에서 쓰는 이메일입니다.")
+    else:
+        messages.success(request, "이메일을 저장했습니다.")
+    return redirect("accounts:account")
+
+
+@login_required
+@require_POST
+def disconnect(request: HttpRequest, client_pk: int) -> HttpResponse:
+    user = _member_or_403(request)
+    if disconnect_app(user, client_pk, ip=client_ip(request)):
+        messages.success(request, "앱 연결을 끊었습니다.")
+    else:
+        messages.info(request, "이미 연결이 끊어진 앱입니다.")
+    return redirect("accounts:account")
 
 
 @login_required
@@ -250,4 +288,4 @@ def unlink(request: HttpRequest, identity_id: int) -> HttpResponse:
         raise PermissionDenied("for members only") from error
     else:
         messages.success(request, "로그인 연결을 해제했습니다.")
-    return redirect("accounts:identities")
+    return redirect("accounts:account")
