@@ -7,7 +7,7 @@ the screen.
 from urllib.parse import urlencode
 
 from django.contrib import messages
-from django.contrib.auth import login
+from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.core.exceptions import PermissionDenied
@@ -48,6 +48,7 @@ from services.social import (
 )
 from services.social_providers import SocialLoginFailed, SocialProvider, configured_providers
 from services.terms import needs_terms
+from services.withdrawal import CONFIRM_PHRASE, withdraw_member
 
 BACKEND = "django.contrib.auth.backends.ModelBackend"
 PENDING_SOCIAL_KEY = "accounts.social_pending"
@@ -289,3 +290,20 @@ def unlink(request: HttpRequest, identity_id: int) -> HttpResponse:
     else:
         messages.success(request, "로그인 연결을 해제했습니다.")
     return redirect("accounts:account")
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def withdraw(request: HttpRequest) -> HttpResponse:
+    """탈퇴 (#39, ADR 0004): GET shows what happens, POST with the confirmation phrase withdraws,
+    signs out and shows the 「탈퇴했습니다」 page. A wrong phrase is 400 with the same page."""
+    user = _member_or_403(request)
+    context = {"phrase": CONFIRM_PHRASE, "apps": [app.name for app in connected_apps(user)]}
+    if request.method == "GET":
+        return render(request, "accounts/withdraw.html", context)
+    if request.POST.get("confirm", "").strip() != CONFIRM_PHRASE:
+        context["error"] = f"「{CONFIRM_PHRASE}」를 정확히 입력하세요."
+        return render(request, "accounts/withdraw.html", context, status=400)
+    withdraw_member(user)
+    logout(request)
+    return render(request, "accounts/withdrawn.html")

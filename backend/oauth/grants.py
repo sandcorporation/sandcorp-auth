@@ -46,6 +46,7 @@ from oauth.tokens import (
 from services import audit
 from services.members import (
     MemberClientRefused,
+    MemberInactive,
     MemberScopeRefused,
     MemberTermsPending,
     check_member_grant,
@@ -127,6 +128,8 @@ def member_authorization(user: User, client: Client, scopes: list[str]) -> None:
     terms screen first."""
     try:
         check_member_grant(user, client, scopes)
+    except MemberInactive:
+        raise AccessDeniedError("This account is no longer active.") from None
     except MemberClientRefused:
         raise AccessDeniedError("This client does not accept Sandcorp member accounts.") from None
     except MemberScopeRefused as refused:
@@ -141,7 +144,7 @@ def member_token(user: User, client: Client, scopes: list[str]) -> None:
     refusal is `invalid_grant`."""
     try:
         check_member_grant(user, client, scopes)
-    except (MemberClientRefused, MemberScopeRefused, MemberTermsPending):
+    except (MemberInactive, MemberClientRefused, MemberScopeRefused, MemberTermsPending):
         raise InvalidGrantError("This grant is not available to member accounts here.") from None
 
 
@@ -335,7 +338,12 @@ class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no 
         with transaction.atomic():
             unspent = (
                 RefreshToken.objects.select_for_update()
-                .filter(pk=token.pk, replaced_by__isnull=True, revoked_at__isnull=True)
+                .filter(
+                    pk=token.pk,
+                    replaced_by__isnull=True,
+                    revoked_at__isnull=True,
+                    family__revoked_at__isnull=True,  # e.g. revoked by a withdrawal meanwhile
+                )
                 .exists()
             )
             if unspent:

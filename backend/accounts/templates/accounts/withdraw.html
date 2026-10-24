@@ -1,0 +1,24 @@
+{% extends "accounts/base.html" %}
+{% block title %}계정 탈퇴{% endblock %}
+{% block masthead_meta %}내 계정{% endblock %}
+{% block content %}
+<h1>계정 탈퇴</h1>
+<p class="auth-lead">탈퇴하기 전에 아래 내용을 확인하세요.</p>
+{% if error %}<div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">탈퇴하지 않았습니다</span>{{ error }}</div>{% endif %}
+<ul class="sc-list" data-slot="withdraw-effects">
+  <li><span>바로 로그아웃되고, 이 계정으로는 더 로그인할 수 없습니다.</span></li>
+  <li><span>{% if apps %}연결된 앱({{ apps|join:", " }})과의 연결이 모두 끊기고, 앱에 탈퇴 사실을 알립니다.{% else %}지금 연결된 앱은 없습니다. 예전에 연결했던 앱에는 탈퇴 사실을 알립니다.{% endif %}</span></li>
+  <li><span>이메일·이름·로그인 연결 정보는 30일 뒤 삭제합니다. 그 사이에도 계정을 되살릴 수 없습니다.</span></li>
+  <li><span>같은 Google·Kakao 계정으로 다시 오면 새 계정으로 가입합니다.</span></li>
+</ul>
+<form method="post" action="/account/withdraw" class="auth-form">
+  {% csrf_token %}
+  <div class="sc-field{% if error %} sc-field--error{% endif %}">
+    <label class="sc-field-label" for="confirm">확인을 위해 「{{ phrase }}」를 입력하세요</label>
+    <input class="sc-input" type="text" id="confirm" name="confirm" autocomplete="off" required aria-describedby="confirm-hint"{% if error %} aria-invalid="true"{% endif %}>
+    <span class="sc-field-hint" id="confirm-hint">입력한 문구가 같아야 탈퇴합니다.</span>
+  </div>
+  <button class="sc-btn sc-btn--block" type="submit">탈퇴하기</button>
+</form>
+<p class="auth-note"><a href="/account">탈퇴하지 않고 내 계정으로 돌아가기</a></p>
+{% endblock %}

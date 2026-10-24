@@ -112,6 +112,17 @@ class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no
         help_text="켜면 대표 말고 일반 사용자(소셜 로그인 계정)도 이 클라이언트로 로그인한다. "
         "일반 사용자는 login·openid·profile·email 스코프만 받는다.",
     )
+    # user.deleted webhook (#39, ADR 0004): where to POST it, and the HMAC secret encrypted
+    # with SIGNING_KEY_ENCRYPTION_KEY (HMAC needs the secret itself, so it is not hashed).
+    webhook_url = models.URLField(
+        "웹훅 URL",
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="탈퇴한 사용자를 알리는 user.deleted 웹훅을 받을 https 주소. "
+        "비우면 보내지 않는다.",
+    )
+    webhook_secret_encrypted = models.BinaryField(null=True, blank=True, editable=False)
     # CIMD cache: when the document was fetched, until when it may be used without refetching,
     # and the document itself. Empty for DCR/admin clients.
     metadata_fetched_at = models.DateTimeField(null=True, blank=True)
@@ -315,3 +326,32 @@ class RefreshToken(TokenMixin, models.Model):  # type: ignore[misc]  # authlib h
 
     def get_client(self) -> Client:
         return self.family.client
+
+
+class WebhookDelivery(models.Model):
+    """One webhook event for one client, waiting to be sent or sent (#39, ADR 0004).
+
+    `body` is the exact JSON that is signed and sent on every attempt (same `event_id`, so the
+    receiver can drop a repeat). `webhooks deliver` sends the rows whose `next_attempt_at` has
+    come; a 2xx answer sets `delivered_at`, a failure schedules the next attempt, and after the
+    last one `gave_up_at` is set.
+    """
+
+    event_id = models.CharField(max_length=26, unique=True, db_collation="ascii_bin")
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="webhook_deliveries")
+    event_type = models.CharField(max_length=32)
+    body = models.TextField()
+    created_at = models.DateTimeField()
+    attempts = models.PositiveIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=200, blank=True, default="")
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    gave_up_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "웹훅 전송"
+        verbose_name_plural = "웹훅 전송"
+
+    def __str__(self) -> str:
+        return f"{self.event_type} {self.event_id} → {self.client_id}"

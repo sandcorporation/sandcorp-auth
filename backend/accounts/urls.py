@@ -15,6 +15,7 @@ urlpatterns = [
     path("account", social_views.account, name="account"),
     # The old address of the same page (#36), kept so links and bookmarks still work.
     path("account/identities", social_views.account, name="identities"),
+    path("account/withdraw", social_views.withdraw, name="withdraw"),
     path("account/email", social_views.set_email, name="account_email"),
     path("account/apps/<int:client_pk>/disconnect", social_views.disconnect, name="app_disconnect"),
     path("account/identities/link/<str:provider>", social_views.link_start, name="identity_link"),

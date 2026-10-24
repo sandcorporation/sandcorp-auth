@@ -22,16 +22,20 @@ from django.test import Client
 
 from accounts.models import ExternalIdentity
 from oauth.models import Client as OAuthClient
-from oauth.models import Consent, RefreshTokenFamily, Resource, SigningKey
+from oauth.models import Consent, RefreshTokenFamily, Resource, SigningKey, WebhookDelivery
 from oauth.tokens import live_family
-from services import throttle
+from services import audit, throttle
 from services.members import ExternalProfile, IdentityTaken, create_member
 from services.signing import ActiveSigningKeyExists, create_signing_key
 from services.social import SignInResult, link_identity, sign_in, unlink_identity
+from services.webhooks import deliver_due, set_webhook
+from services.withdrawal import withdraw_member
 from tests.conftest import (
     PORTFOLIO,
+    FakeWebhooks,
     FrozenClock,
     exchange_code,
+    make_member,
     obtain_authorization_code,
     obtain_tokens,
     refresh,
@@ -201,3 +205,29 @@ def test_a_refresh_token_is_rotated_once(
 
     assert all(not isinstance(r, BaseException) for r in results), results
     assert _successes(results) == 1
+
+
+def test_concurrent_withdrawals_withdraw_once_and_queue_one_webhook(
+    dcr_client: OAuthClient, fake_webhooks: FakeWebhooks
+) -> None:
+    from audit.models import AuditEvent
+
+    member = make_member()
+    set_webhook(dcr_client, url="https://site.example/hook", rotate_secret=False, actor="t")
+    Consent.objects.create(
+        user=member,
+        client=dcr_client,
+        resource=Resource.objects.get(url=PORTFOLIO),
+        scopes=["login"],
+        granted_at=NOW,
+    )
+
+    results = race(lambda: withdraw_member(User.objects.get(pk=member.pk)))
+
+    assert results.count(True) == 1 and results.count(False) == THREADS - 1, results
+    assert AuditEvent.objects.filter(kind=audit.MEMBER_WITHDRAWN).count() == 1
+    assert WebhookDelivery.objects.count() == 1
+
+    reports = race(deliver_due)
+    assert sum(r.delivered for r in reports if not isinstance(r, BaseException)) == 1, reports
+    assert len(fake_webhooks.sent) == 1

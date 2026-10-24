@@ -139,6 +139,9 @@ compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운�
 | 대표 이메일·이름(OIDC) | `manage owner set-email --email <주소>` · `manage owner set-name --name <이름>` | ID 토큰·userinfo의 `email`(+`email_verified`)·`name`. 비우면 클레임이 빠진다. oauth2-proxy는 email이 없으면 로그인을 막으므로 forward auth 전에 넣는다 |
 | 자원·스코프 추가 | admin → 자원(`/<admin>/oauth/resource/`) | 스코프는 자원 변경 화면 아래 인라인 |
 | 약관 새 버전 등록 | `manage terms add --kind terms|privacy --doc-version <이름> --effective YYYY-MM-DD --url <공개 주소>` 또는 admin → 약관 문서(`/<admin>/accounts/termsdocument/`) 「추가」 | 시행일이 되면 그 버전이 현재 버전이 되고, 아직 동의하지 않은 일반 사용자는 다음 로그인·`/authorize`에서 동의 화면을 본다(그 전까지 `/token`·리프레시도 `invalid_grant`). 등록한 버전은 고치거나 지울 수 없다. 감사 `terms.registered`. 10절 |
+| 웹훅 등록·비밀 재발급 | `manage clients webhook --client-id <id> --url https://…`(처음이면 비밀도 발급) / `--rotate-secret` / `--remove`, 또는 admin 클라이언트 변경 화면 「웹훅 URL」·「웹훅 비밀 재발급」 | 탈퇴한 일반 사용자를 알리는 `user.deleted`를 받을 주소. 비밀은 한 번만 출력된다(DB엔 Fernet 암호문). 감사 `client.webhook_changed`. 11절 |
+| 웹훅 전송·대기열 보기 | `manage webhooks deliver` / `manage webhooks list` | cron 5분마다(11절). `list`는 아직 못 보낸 것과 포기한 것(`gave_up`)을 보인다 |
+| 보유 기간 정리 | `manage members purge [--dry-run]` | cron 하루 한 번(11절). 탈퇴 30일 지난 계정의 개인정보, 1년 지난 감사 기록, 30일 지난 끝난 웹훅 전송, 하루 넘게 쉰 요청 제한 카운터를 지운다(ADR 0004) |
 | 약관 버전 목록 | `manage terms list` | `*`가 시행 중인 현재 버전 |
 
 `<admin>`은 `DJANGO_ADMIN_PATH` 값. admin은 이 서비스 로그인(비밀번호 + TOTP)을 거친다. `client_id`는 `-`로 시작할 수 있으므로 명령에는 `--client-id=<id>`처럼 `=`로 붙여 쓴다(띄우면 옵션으로 읽혀 「expected one argument」).
@@ -376,4 +379,41 @@ docker exec -it sandcorp-auth-web-1 python manage.py terms list   # 두 줄 모�
 - 버전 이름은 자유 문자열(종류마다 유일). 게시일과 맞춰 `YYYY-MM`을 권한다.
 - 약관을 바꿀 때: privacy-and-terms 본문(같은 주소)을 고치고 게시일을 바꾼 뒤, 새 버전을 시행일과 함께 등록한다. 시행일 전에는 옛 버전이 현재 버전이다. 시행일(Asia/Seoul 날짜)부터 기존 일반 사용자는 다시 동의할 때까지 새 토큰·리프레시를 받지 못한다 — 앱은 로그인으로 돌아오고, 로그인·`/authorize`가 동의 화면을 먼저 보인다.
 - 같은 주소를 덮어쓰므로 옛 버전의 본문은 privacy-and-terms의 git 기록이 원본이다.
+
+## 11. 탈퇴·웹훅·보유 기간(#39, ADR 0004)
+
+일반 사용자가 「내 계정 → 계정 탈퇴」에서 「탈퇴합니다」를 입력하면 그 즉시 비활성(로그인·`/authorize`·`/token`·`/userinfo` 거절)되고, 모든 세션·동의·리프레시 토큰이 끝나며, 소셜 로그인 연결이 풀려 같은 소셜 계정으로 오면 새 계정이 된다. 그 사용자의 감사 기록 IP는 지워진다. 감사 `member.withdrawn`. 복구 절차는 없다.
+
+### 주기 실행(cron)
+
+저장소에 주기 작업 장치가 없으므로(Jenkins는 main push 때 배포만) 운영 호스트의 crontab에 둔다. 컨테이너 이름은 0절의 것.
+
+```cron
+# sandcorp-auth: 웹훅 전송(5분마다), 보유 기간 정리(매일 04:10 KST)
+*/5 * * * * docker exec sandcorp-auth-web-1 python manage.py webhooks deliver >> /var/log/sandcorp-auth-cron.log 2>&1
+10 4 * * *  docker exec sandcorp-auth-web-1 python manage.py members purge >> /var/log/sandcorp-auth-cron.log 2>&1
+```
+
+- `webhooks deliver`는 보낼 때가 된 전송만 보낸다(한 번에 100건). 겹쳐 돌아도 한 전송을 두 번 보내지 않는다. 실패하면 5분·15분·1시간·3시간·6시간·12시간·24시간 뒤 다시 보내고, 8번째도 실패하면 포기한다. 포기한 것은 `webhooks list`에서 `gave_up`으로 보이며, 사이트 쪽을 고친 뒤 필요하면 사이트에 직접 알린다(다시 넣는 명령은 없다).
+- `members purge`는 몇 번 돌려도 같다. 먼저 `--dry-run`으로 대상(`sub` 목록·건수)을 볼 수 있다. cron을 며칠 놓쳐도 다음 실행이 밀린 것을 지운다 — 다만 약관이 「30일 뒤 삭제」라 하루 넘게 놓치지 않게 로그를 본다.
+
+### 웹훅 붙이기(사이트마다)
+
+1. 사이트가 받는 엔드포인트를 만든다(검증 규칙 `docs/resource-server-token-validation.md` 11절).
+2. `docker exec -it sandcorp-auth-web-1 python manage.py clients webhook --client-id <id> --url https://<사이트>/…` → 출력된 `webhook_secret`을 사이트 env에 넣는다(다시 볼 수 없다).
+3. `clients list`의 마지막 열이 `webhook=<주소>`인지 본다.
+4. 비밀이 샜으면 `--rotate-secret`(옛 비밀 즉시 무효), 웹훅을 끄려면 `--remove`.
+
+웹훅은 그 사용자가 **한 번이라도 동의한** 클라이언트에만 간다. `SIGNING_KEY_ENCRYPTION_KEY`를 바꾸면 웹훅 비밀도 모두 다시 발급해야 한다(복호화할 수 없게 된다).
+
+### 보유 기간
+
+| 무엇 | 언제 지우나 |
+|---|---|
+| 탈퇴 계정의 이메일·이름·약관 동의·앱 동의 | 탈퇴 30일 뒤 `members purge` (`sub`·탈퇴 시각·상태는 묘비로 남는다) |
+| 탈퇴 계정의 소셜 로그인 연결 | 탈퇴 즉시 |
+| 탈퇴 계정의 감사 기록 IP | 탈퇴 즉시(기록은 남는다) |
+| 감사 기록 | 생성 1년 뒤 `members purge`(대표 포함 전체) |
+| 끝난 웹훅 전송 | 만든 지 30일 뒤 `members purge` |
+| 요청 제한 카운터(IP) | 하루 넘게 쉬면 `members purge` |
 

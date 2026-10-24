@@ -380,7 +380,94 @@ A1~A3 위반은 401 `invalid_token`. 대표 전용 기능(그 사이트의 관�
 
 - 「일반 사용자 허용」이 꺼진 클라이언트로 일반 사용자가 `/authorize`에 오면 동의 화면 없이 `redirect_uri?error=access_denied&state=…`로 돌아간다. 코드 교환·리프레시 사이에 표시가 꺼지면 `/token`이 400 `invalid_grant`.
 - 일반 사용자가 `login`·`openid`·`profile`·`email` 밖의 스코프(`admin`, `editor` 등)를 요청하면 `error=invalid_scope`로 돌아간다(빼고 발급하지 않는다).
+- 탈퇴(#39): 탈퇴한 일반 사용자는 그 즉시 `/authorize`·`/token`(코드·리프레시 400 `invalid_grant`)·`/userinfo`(401)가 모두 거절된다. 이미 받은 액세스 토큰은 만료(최대 10분)까지 서명상 유효하므로, 사이트는 아래 11절의 `user.deleted` 웹훅을 받아 그 `sub`의 세션·데이터를 정리한다.
 - 약관(#37): 현재 약관 버전에 동의하지 않은 일반 사용자(첫 가입, 또는 새 버전 시행 뒤)는 `/authorize`에서 auth의 동의 화면을 먼저 보고, 동의하면 같은 인가 요청으로 돌아온다 — 사이트는 할 일이 없다. 다만 새 버전이 시행되면 그 사용자의 코드 교환·리프레시가 400 `invalid_grant`가 되므로, 리프레시 실패 때 사이트는 로그인(`/authorize`)부터 다시 시작한다.
 
 참조 구현은 `backend/tests/reference_validator.py`의 `validate_account_access_token`(반환값 `acct`가 `"owner"` 또는 `"member"`), 시험은 `backend/tests/test_reference_validator.py`와 `backend/tests/test_members.py`.
+
+## 11. 탈퇴 웹훅(`user.deleted`)
+
+일반 사용자가 탈퇴하면(ADR 0004) auth는 그 사용자가 **한 번이라도 동의한 클라이언트** 중 웹훅 URL이 있는 곳에 `user.deleted`를 보낸다. 받는 사이트는 그 `sub`의 로그인 세션을 끝내고, 그 사용자에게 딸린 개인정보를 사이트의 보유 규칙대로 지운다. 같은 사람이 같은 소셜 계정으로 다시 가입해도 **새 `sub`**가 되므로 옛 `sub`의 데이터를 새 계정에 이어 붙이지 않는다.
+
+### 등록
+
+auth 운영자가 클라이언트마다 웹훅 URL(https만)을 정하면 서명 비밀이 **한 번만** 출력된다(`docs/operations.md` 11절). 사이트는 그 비밀을 env 등에 넣는다.
+
+```bash
+python manage.py clients webhook --client-id <id> --url https://news.sandcorp.co.kr/auth/webhook
+# 비밀 재발급(옛 것은 즉시 무효): clients webhook --client-id <id> --rotate-secret
+```
+
+### 요청 모양
+
+`POST <웹훅 URL>`, `Content-Type: application/json`. 본문(바이트 그대로 서명된다 — 다시 직렬화하지 말고 받은 바이트로 검증한다):
+
+```json
+{"id":"01JB0Z8F3W4Q2Y6K7M9N0P1R2S","type":"user.deleted","sub":"m_01J9…","occurred_at":"2026-10-24T03:15:00Z"}
+```
+
+| 헤더 | 값 |
+|---|---|
+| `X-Sandcorp-Signature` | `t=<보낸 시각, 유닉스 초>,v1=<hex HMAC-SHA256(비밀, "<t>.<본문>")>` |
+| `X-Sandcorp-Event` | `user.deleted` |
+| `X-Sandcorp-Delivery` | 본문의 `id`와 같다(이벤트 ULID) |
+
+- `occurred_at`은 탈퇴 시각(UTC), `t`는 이번 시도를 보낸 시각이다. 재시도마다 `t`와 서명은 새로 계산되지만 본문과 `id`는 같다.
+- 2xx로 답하면 끝이다. 그 밖(3xx 포함 — 리다이렉트를 따라가지 않는다)이나 연결 실패면 5분·15분·1시간·3시간·6시간·12시간·24시간 뒤 다시 보내고, 8번째 시도도 실패하면 포기한다(전송기는 5분마다 돌므로 실제 간격은 최대 5분 늦다).
+
+### 받는 쪽 검증 규칙
+
+- **W1.** `X-Sandcorp-Signature`에서 `t`와 `v1`을 꺼낸다. 형식이 틀리면 거부(400).
+- **W2.** `|지금 − t| ≤ 300초`가 아니면 거부(400). 시계가 맞아야 한다(NTP).
+- **W3.** `HMAC-SHA256(비밀, "<t>." + 받은 본문 바이트)`의 hex가 `v1`과 같아야 한다. 비교는 상수 시간(`hmac.compare_digest`). 다르면 거부(401).
+- **W4.** 본문의 `id`를 이미 처리했으면 아무것도 하지 않고 2xx(재시도·중복 전송). 처리한 `id`는 적어도 3일(재시도 기간보다 길게) 기억한다.
+- **W5.** `type`이 `user.deleted`면 `sub`의 세션·데이터를 정리하고 2xx. 모르는 `type`은 무시하고 2xx(나중에 종류가 늘 수 있다).
+- 처리는 짧게 끝낸다(10초 안에 답하지 않으면 실패로 보고 다시 보낸다). 무거운 정리는 큐에 넣고 먼저 2xx로 답한다.
+
+### Python 예시
+
+```python
+import hashlib
+import hmac
+import json
+import time
+
+TOLERANCE_SECONDS = 300
+
+
+class WebhookRejected(Exception):
+    def __init__(self, status: int, reason: str) -> None:
+        super().__init__(reason)
+        self.status = status
+
+
+def verify_sandcorp_webhook(
+    secret: str, body: bytes, signature_header: str, *, now: float | None = None
+) -> dict:
+    """W1~W3. 받은 본문 바이트와 X-Sandcorp-Signature 헤더로 검증하고 이벤트를 돌려준다."""
+    parts = dict(item.split("=", 1) for item in signature_header.split(",") if "=" in item)
+    try:
+        timestamp = int(parts["t"])
+        given = parts["v1"]
+    except (KeyError, ValueError):
+        raise WebhookRejected(400, "bad signature header") from None
+    current = time.time() if now is None else now
+    if abs(current - timestamp) > TOLERANCE_SECONDS:
+        raise WebhookRejected(400, "stale timestamp")
+    expected = hmac.new(
+        secret.encode(), f"{timestamp}.".encode() + body, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, given):
+        raise WebhookRejected(401, "bad signature")
+    return json.loads(body)
+
+
+# 사용(Django 예):
+# event = verify_sandcorp_webhook(SECRET, request.body, request.headers["X-Sandcorp-Signature"])
+# if seen(event["id"]): return 200                       # W4
+# if event["type"] == "user.deleted": forget_user(event["sub"])   # W5
+# remember(event["id"]); return 200
+```
+
+이 예시는 `backend/tests/test_withdrawal.py`가 이 문서에서 그대로 꺼내 auth가 보낸 실제 요청으로 시험한다(문서와 구현이 어긋나면 시험이 깨진다).
 

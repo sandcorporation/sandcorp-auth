@@ -59,9 +59,8 @@
 
 <section class="auth-section" data-slot="withdraw">
   <h2>계정 탈퇴</h2>
-  <p class="auth-meta-text">탈퇴하면 이 계정으로는 더 로그인할 수 없습니다.</p>
-  <button class="sc-btn sc-btn--secondary auth-subtle" type="button" disabled aria-describedby="withdraw-note">탈퇴하기</button>
-  <p class="auth-meta-text" id="withdraw-note">탈퇴 기능은 준비 중입니다.</p>
+  <p class="auth-meta-text">탈퇴하면 이 계정으로는 더 로그인할 수 없고, 연결된 앱에도 탈퇴를 알립니다. 되돌릴 수 없습니다.</p>
+  <a class="sc-btn sc-btn--secondary auth-subtle" href="/account/withdraw">탈퇴하기</a>
 </section>
 
 <form method="post" action="/logout" class="auth-section">{% csrf_token %}<button type="submit" class="auth-link-button">로그아웃</button></form>

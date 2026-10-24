@@ -29,6 +29,9 @@ class Member(models.Model):
         # Made by a first social login; becomes active once the terms are agreed to (#37).
         PENDING_TERMS = "pending_terms", "동의 대기"
         ACTIVE = "active", "활성"
+        # Withdrawn (#39, ADR 0004): inactive at once, personal data purged 30 days later; the
+        # row stays as the tombstone of its `sub`.
+        WITHDRAWN = "withdrawn", "탈퇴"
 
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="member"
@@ -36,6 +39,9 @@ class Member(models.Model):
     created_at = models.DateTimeField()
     email_verified = models.BooleanField(default=False)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING_TERMS)
+    withdrawn_at = models.DateTimeField("탈퇴 시각", null=True, blank=True)
+    # When `members purge` erased the email, name, identities and agreements (ADR 0004).
+    purged_at = models.DateTimeField("개인정보 삭제 시각", null=True, blank=True)
 
     def __str__(self) -> str:
         return f"일반 사용자 {self.user_id}"
