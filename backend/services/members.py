@@ -44,6 +44,10 @@ class IdentityTaken(Exception):
     """This (provider, provider sub) already belongs to an account."""
 
 
+class MemberInactive(Exception):
+    """The account is inactive: a withdrawn member (#39, ADR 0004) gets nothing any more."""
+
+
 class MemberClientRefused(Exception):
     """The client does not allow members."""
 
@@ -72,14 +76,19 @@ class ExternalProfile:
 
 
 def new_member_sub() -> str:
-    """`m_` + a ULID: 48-bit milliseconds of `get_clock()` and 80 random bits, base32."""
+    """`m_` + a ULID."""
+    return MEMBER_SUB_PREFIX + new_ulid()
+
+
+def new_ulid() -> str:
+    """A ULID: 48-bit milliseconds of `get_clock()` and 80 random bits, Crockford base32."""
     millis = int(get_clock().now().timestamp() * 1000) & ((1 << 48) - 1)
     value = (millis << 80) | int.from_bytes(get_randomness().token_bytes(10), "big")
     chars = []
     for _ in range(26):
         chars.append(_CROCKFORD[value & 31])
         value >>= 5
-    return MEMBER_SUB_PREFIX + "".join(reversed(chars))
+    return "".join(reversed(chars))
 
 
 def is_member_sub(username: str) -> bool:
@@ -145,7 +154,10 @@ def member_email_verified(user: User) -> bool:
 def check_member_grant(user: User, client: Client, scopes: list[str]) -> None:
     """For a member: the client must allow members and every scope must be a member scope.
     and it must have agreed to the current terms (#37). Raises MemberClientRefused /
-    MemberScopeRefused / MemberTermsPending, in that order; does nothing for the owner."""
+    MemberScopeRefused / MemberTermsPending, in that order; does nothing for the owner.
+    An inactive account (a withdrawn member, #39) is refused first: MemberInactive."""
+    if not user.is_active or not User.objects.filter(pk=user.pk, is_active=True).exists():
+        raise MemberInactive(user.get_username())
     if not is_member(user):
         return
     if not client.allows_members:
@@ -200,7 +212,7 @@ def set_member_email(user: User, email: str, *, ip: str = "") -> None:
         User.objects.select_for_update().filter(pk=user.pk).first()
         taken = (
             User.objects.alias(e=Lower("email"))
-            .filter(e=cleaned.lower(), member__isnull=False)
+            .filter(e=cleaned.lower(), member__isnull=False, is_active=True)
             .exclude(pk=user.pk)
             .exists()
         )

@@ -30,6 +30,7 @@ from adapters.clock import set_clock
 from adapters.http import FetchedDocument, FetchError, set_http_client
 from adapters.randomness import set_randomness
 from adapters.social_http import set_provider_http
+from adapters.webhook_http import set_webhook_http
 from oauth.models import Client as OAuthClient
 from oauth.models import SigningKey
 from services.members import ExternalProfile, create_member
@@ -379,6 +380,31 @@ def fake_providers() -> Iterator[FakeProviders]:
     previous = set_provider_http(fake)
     yield fake
     set_provider_http(previous)
+
+
+class FakeWebhooks:
+    """Records every webhook POST; answers with the queued `answers` (a status, or a
+    FetchError to raise), 200 once they run out."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, bytes, dict[str, str]]] = []
+        self.answers: list[int | FetchError] = []
+
+    def post(self, url: str, body: bytes, *, headers: "Mapping[str, str]") -> int:
+        self.sent.append((url, body, dict(headers)))
+        answer = self.answers.pop(0) if self.answers else 200
+        if isinstance(answer, FetchError):
+            raise answer
+        return answer
+
+
+@pytest.fixture(autouse=True)
+def fake_webhooks() -> Iterator[FakeWebhooks]:
+    """Every test's webhooks go to a fake (never a real host)."""
+    fake = FakeWebhooks()
+    previous = set_webhook_http(fake)
+    yield fake
+    set_webhook_http(previous)
 
 
 NEWS = "https://news.sandcorp.co.kr/mcp"

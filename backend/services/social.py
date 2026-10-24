@@ -209,7 +209,8 @@ def providers_with_email(profile: ExternalProfile) -> list[str]:
     by_identity = (
         ExternalIdentity.objects.alias(e=Lower("email")).filter(e=wanted).values("user_id")
     )
-    users = User.objects.filter(pk__in=member_users).filter(
+    # A withdrawn account is never pointed to (ADR 0004: no 「이전 계정」 notice).
+    users = User.objects.filter(pk__in=member_users, is_active=True).filter(
         Q(pk__in=by_account) | Q(pk__in=by_identity)
     )
     providers = (

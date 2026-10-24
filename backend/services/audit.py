@@ -42,6 +42,9 @@ IDENTITY_UNLINKED: Final = "identity.unlinked"
 MEMBER_EMAIL_CHANGED: Final = "member.email_changed"
 TERMS_REGISTERED: Final = "terms.registered"
 TERMS_AGREED: Final = "terms.agreed"
+CLIENT_WEBHOOK_CHANGED: Final = "client.webhook_changed"
+MEMBER_WITHDRAWN: Final = "member.withdrawn"
+MEMBER_PURGED: Final = "member.purged"
 
 SECRET_KEYS: Final = frozenset({"password", "code", "token", "secret", "otp"})
 

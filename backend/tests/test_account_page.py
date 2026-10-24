@@ -44,7 +44,7 @@ def test_account_page_lists_logins_email_and_no_apps(member_client: Client, memb
     body = page(member_client)
     assert "내 계정" in body and "Google" in body and member.email in body
     assert "연결된 앱이 없습니다" in body
-    assert "탈퇴하기" in body and "disabled" in body
+    assert "탈퇴하기" in body and 'href="/account/withdraw"' in body  # #39
     # The old address serves the same page.
     assert member_client.get("/account/identities").status_code == 200
 

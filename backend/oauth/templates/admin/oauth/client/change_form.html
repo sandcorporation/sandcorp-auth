@@ -8,5 +8,13 @@
       </form>
     </li>
   {% endif %}
+  {% if original and original.webhook_url %}
+    <li>
+      <form method="post" action="{% url 'admin:oauth_client_rotate_webhook_secret' original.pk %}">
+        {% csrf_token %}
+        <button type="submit" class="button">웹훅 비밀 재발급</button>
+      </form>
+    </li>
+  {% endif %}
   {{ block.super }}
 {% endblock %}

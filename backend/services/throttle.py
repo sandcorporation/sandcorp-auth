@@ -9,7 +9,8 @@ Rules are named in `settings.THROTTLE` (`{"login": {"limit": 5, "window_seconds"
 - `reset(name, key)`: forget the key (after a success).
 
 `hit` locks the row with `select_for_update` inside a transaction, so concurrent failures are
-counted one by one. Expired rows are reused; there is no cleanup job.
+counted one by one. Expired rows are reused; `purge_stale` (run by `manage.py members purge`,
+ADR 0004) deletes the ones idle for `STALE_AFTER`, since a key holds an IP address.
 
 A rule with `"mode": "backoff"` (`{"mode": "backoff", "max_delay_seconds": 60,
 "window_seconds": 900}`) delays instead of blocking: `backoff_hit(name, key)` records the n-th
@@ -139,3 +140,19 @@ def backoff_hit(name: str, key: str) -> ThrottleDecision:
 
 def reset(name: str, key: str) -> None:
     ThrottleCounter.objects.filter(key=f"{name}:{key}").delete()
+
+
+# Longer than every window and block in settings.THROTTLE (at most an hour): a row idle this
+# long counts nothing any more, so deleting it changes no decision.
+STALE_AFTER = timedelta(days=1)
+
+
+def purge_stale() -> int:
+    """Delete counters idle for STALE_AFTER (no window or block still running). Returns how many."""
+    cutoff = get_clock().now() - STALE_AFTER
+    deleted, _ = (
+        ThrottleCounter.objects.filter(window_started_at__lt=cutoff)
+        .exclude(blocked_until__gte=cutoff)
+        .delete()
+    )
+    return deleted

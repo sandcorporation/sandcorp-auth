@@ -9,6 +9,7 @@ from services.confidential_clients import (
     rotate_client_secret,
 )
 from services.members import set_allows_members
+from services.webhooks import InvalidWebhookUrl, set_webhook
 
 ACTOR = "manage.py clients"
 
@@ -16,7 +17,8 @@ ACTOR = "manage.py clients"
 class Command(BaseCommand):
     help = (
         "OAuth 클라이언트 관리: create-confidential(사이트 관리 화면 로그인용 기밀 클라이언트), "
-        "rotate-secret, members(일반 사용자 허용 켜기·끄기), list. "
+        "rotate-secret, members(일반 사용자 허용 켜기·끄기), "
+        "webhook(user.deleted 웹훅 주소·서명 비밀), list. "
         "시크릿 원문은 발급할 때 한 번만 출력한다."
     )
 
@@ -47,6 +49,18 @@ class Command(BaseCommand):
         switch = members.add_mutually_exclusive_group(required=True)
         switch.add_argument("--allow", dest="allow", action="store_true")
         switch.add_argument("--deny", dest="allow", action="store_false")
+        webhook = actions.add_parser(
+            "webhook", help="user.deleted 웹훅 주소를 정하고 서명 비밀을 발급한다(ADR 0004)"
+        )
+        webhook.add_argument("--client-id", required=True)
+        target = webhook.add_mutually_exclusive_group()
+        target.add_argument("--url", help="https 주소. 처음 정하면 서명 비밀도 발급한다")
+        target.add_argument("--remove", action="store_true", help="웹훅을 끈다(주소·비밀 삭제)")
+        webhook.add_argument(
+            "--rotate-secret",
+            action="store_true",
+            help="서명 비밀을 새로 발급한다(옛 것은 즉시 무효)",
+        )
         actions.add_parser("list", help="클라이언트 목록(시크릿 없음)")
 
     def handle(self, *args: object, **options: object) -> None:
@@ -85,6 +99,8 @@ class Command(BaseCommand):
             set_allows_members(found, allowed, actor=ACTOR)
             state = "켰습니다" if allowed else "껐습니다"
             self.stdout.write(f"{found.name}({found.client_id})의 일반 사용자 허용을 {state}.")
+        elif action == "webhook":
+            self._webhook(options)
         else:
             for client in Client.objects.order_by("created_at"):
                 state = "active" if client.active else "inactive"
@@ -92,8 +108,38 @@ class Command(BaseCommand):
                 uris = " ".join(client.redirect_uris)
                 self.stdout.write(
                     f"{client.client_id}\t{client.kind}\t{client.registered_via}\t{state}\t"
-                    f"{client.name}\t{uris}\t{members}"
+                    f"{client.name}\t{uris}\t{members}\twebhook={client.webhook_url or 'off'}"
                 )
+
+    def _webhook(self, options: dict[str, object]) -> None:
+        client_id = str(options["client_id"])
+        found = Client.objects.filter(client_id=client_id).first() if client_id.isascii() else None
+        if found is None:
+            raise CommandError(f"클라이언트가 없습니다: {client_id}", returncode=1)
+        url = "" if options["remove"] else options["url"]
+        rotate = bool(options["rotate_secret"])
+        if url is None and not rotate:
+            raise CommandError(
+                "--url, --remove, --rotate-secret 중 하나가 필요합니다.", returncode=1
+            )
+        if rotate and url is None and not found.webhook_url:
+            raise CommandError("웹훅 주소가 없습니다. --url 로 먼저 정하세요.", returncode=1)
+        try:
+            secret = set_webhook(
+                found, url=None if url is None else str(url), rotate_secret=rotate, actor=ACTOR
+            )
+        except InvalidWebhookUrl as error:
+            raise CommandError(f"https 주소가 아닙니다: {error}", returncode=1) from None
+        if not found.webhook_url:
+            self.stdout.write(f"{found.name}({found.client_id})의 웹훅을 껐습니다.")
+            return
+        self.stdout.write(f"{found.name}({found.client_id})의 웹훅: {found.webhook_url}")
+        if secret is not None:
+            self.stdout.write(
+                f"webhook_secret: {secret}\n"
+                "서명 비밀은 지금 한 번만 보입니다. 사이트의 웹훅 검증 설정에 바로 넣으세요"
+                "(docs/resource-server-token-validation.md 11절)."
+            )
 
     def _print_secret(self, headline: str, client: Client, secret: str) -> None:
         self.stdout.write(

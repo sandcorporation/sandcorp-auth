@@ -30,6 +30,7 @@ from services.confidential_clients import (
 from services.consents import revoke_consent
 from services.members import record_members_changed
 from services.redirect_uris import valid_redirect_uri
+from services.webhooks import InvalidWebhookUrl, set_webhook
 
 if TYPE_CHECKING:
     _ResourceAdmin = admin.ModelAdmin[Resource]
@@ -104,6 +105,12 @@ class ClientChangeForm(_ClientForm):
     class Meta:
         model = Client
         fields = "__all__"
+
+    def clean_webhook_url(self) -> str:
+        url = str(self.cleaned_data.get("webhook_url") or "").strip()
+        if url and not url.startswith("https://"):
+            raise forms.ValidationError("웹훅 URL은 https 주소여야 합니다")
+        return url
 
     def clean_redirect_uris(self) -> list[str]:
         uris: object = self.cleaned_data["redirect_uris"]
@@ -201,6 +208,16 @@ class ClientAdmin(_ClientAdmin):
                 record_members_changed(
                     obj, actor=request.user.get_username(), ip=client_ip(request)
                 )
+            if "webhook_url" in form.changed_data:
+                secret = set_webhook(
+                    obj,
+                    url=obj.webhook_url,
+                    rotate_secret=False,
+                    actor=request.user.get_username(),
+                    ip=client_ip(request),
+                )
+                if secret is not None:
+                    self._show_webhook_secret_once(request, obj, secret)
             return
         issued = create_confidential_client(
             obj.name,
@@ -220,7 +237,43 @@ class ClientAdmin(_ClientAdmin):
             self.admin_site.admin_view(self.rotate_secret_view),
             name="oauth_client_rotate_secret",
         )
-        return [rotate, *super().get_urls()]
+        rotate_webhook = path(
+            "<int:object_id>/rotate-webhook-secret/",
+            self.admin_site.admin_view(self.rotate_webhook_secret_view),
+            name="oauth_client_rotate_webhook_secret",
+        )
+        return [rotate, rotate_webhook, *super().get_urls()]
+
+    def rotate_webhook_secret_view(self, request: HttpRequest, object_id: int) -> HttpResponse:
+        """POST only (a button on the change page): a new webhook signing secret, shown once."""
+        client = get_object_or_404(Client, pk=object_id)
+        change_url = reverse("admin:oauth_client_change", args=[client.pk])
+        if request.method != "POST" or not self.has_change_permission(request, client):
+            return HttpResponseNotAllowed(["POST"])
+        if not client.webhook_url:
+            self.message_user(request, "웹훅 URL이 없습니다.", messages.ERROR)
+            return HttpResponseRedirect(change_url)
+        try:
+            secret = set_webhook(
+                client,
+                url=None,
+                rotate_secret=True,
+                actor=request.user.get_username(),
+                ip=client_ip(request),
+            )
+        except InvalidWebhookUrl:  # pragma: no cover - url=None never validates
+            return HttpResponseRedirect(change_url)
+        if secret is not None:
+            self._show_webhook_secret_once(request, client, secret)
+        return HttpResponseRedirect(change_url)
+
+    @staticmethod
+    def _show_webhook_secret_once(request: HttpRequest, client: Client, secret: str) -> None:
+        messages.success(
+            request,
+            f"웹훅 서명 비밀을 발급했습니다. client_id: {client.client_id} / webhook_secret: "
+            f"{secret} — 지금 한 번만 보입니다. 옛 비밀은 이제 통하지 않습니다.",
+        )
 
     def rotate_secret_view(self, request: HttpRequest, object_id: int) -> HttpResponse:
         """POST only (a button on the change page): a new secret, shown once."""
