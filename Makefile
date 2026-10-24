@@ -19,7 +19,7 @@ dev-backend: db  ## http://localhost:8000
 	cd backend && DB_PORT=15444 DJANGO_DEBUG=1 uv run python manage.py migrate --noinput
 	cd backend && DB_PORT=15444 DJANGO_DEBUG=1 uv run python manage.py runserver 8000
 
-# sandcorp-design dist CSS를 받아 backend/static/design/sandcorp.css로 복사한다(커밋 대상). 예: make sync-design VERSION=v0.3.1
+# sandcorp-design dist CSS를 받아 backend/static/design/sandcorp.css로 복사한다(커밋 대상). 예: make sync-design VERSION=v0.3.2
 sync-design:
 	@test -n "$(VERSION)" || { echo "VERSION=vX.Y.Z 필요"; exit 1; }
 	mkdir -p backend/static/design
