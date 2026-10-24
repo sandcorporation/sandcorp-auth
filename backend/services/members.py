@@ -4,8 +4,9 @@ A member is a Django User with a `accounts.Member` row: `username` is its `sub`,
 `m_` + 26-character ULID (Crockford base32) that never changes and is never made from a name or
 an email. It has no usable password and is never staff. Its tokens carry the account kind claim
 `acct=member` (the owner's tokens carry none, so they stay exactly as before), and it may hold
-only `MEMBER_SCOPES`: login, never a resource's `admin` or `editor`. Only a client marked
-`allows_members` may get a code or a token for a member.
+only `MEMBER_SCOPES` (login and the login info scopes) plus the scopes the requested resource
+marked `Scope.members_allowed` (#47; `member_scopes`), never a resource's `admin` or `editor`.
+Only a client marked `allows_members` may get a code or a token for a member.
 """
 
 import re
@@ -21,7 +22,7 @@ from django.db.models.functions import Lower
 from accounts.models import ExternalIdentity, Member
 from adapters.clock import get_clock
 from adapters.randomness import get_randomness
-from oauth.models import Client
+from oauth.models import NEVER_MEMBER_SCOPES, Client, Resource, Scope
 from services import audit
 from services.oidc import LOGIN_INFO_SCOPES
 from services.terms import needs_terms
@@ -32,7 +33,8 @@ ACCOUNT_KIND_CLAIM: Final = "acct"
 MEMBER: Final = "member"
 MEMBER_SUB_PREFIX: Final = "m_"
 MEMBER_SUB_PATTERN: Final = r"m_[0-7][0-9A-HJKMNP-TV-Z]{25}"
-# Resource scopes a member may hold (besides the login info scopes): sign-in only.
+# Resource scopes every member may hold (besides the login info scopes); a resource may allow
+# more of its own scopes with `Scope.members_allowed` (#47, `member_scopes`).
 MEMBER_RESOURCE_SCOPES: Final = frozenset({"login"})
 MEMBER_SCOPES: Final = MEMBER_RESOURCE_SCOPES | LOGIN_INFO_SCOPES
 
@@ -151,9 +153,18 @@ def member_email_verified(user: User) -> bool:
     return member is not None and member.email_verified
 
 
-def check_member_grant(user: User, client: Client, scopes: list[str]) -> None:
-    """For a member: the client must allow members and every scope must be a member scope.
-    and it must have agreed to the current terms (#37). Raises MemberClientRefused /
+def member_scopes(resource: Resource) -> frozenset[str]:
+    """The scope names a member may hold in a request for `resource`: `MEMBER_SCOPES` plus the
+    scopes *of this resource* marked `members_allowed` (#47). The same name in another resource
+    does not count."""
+    marked = resource.scopes.filter(members_allowed=True).exclude(name__in=NEVER_MEMBER_SCOPES)
+    return MEMBER_SCOPES | frozenset(marked.values_list("name", flat=True))
+
+
+def check_member_grant(user: User, client: Client, scopes: list[str], resource: Resource) -> None:
+    """For a member: the client must allow members, every scope must be a member scope for
+    `resource` (`member_scopes`), and it must have agreed to the current terms (#37). Raises
+    MemberClientRefused /
     MemberScopeRefused / MemberTermsPending, in that order; does nothing for the owner.
     An inactive account (a withdrawn member, #39) is refused first: MemberInactive."""
     if not user.is_active or not User.objects.filter(pk=user.pk, is_active=True).exists():
@@ -162,7 +173,7 @@ def check_member_grant(user: User, client: Client, scopes: list[str]) -> None:
         return
     if not client.allows_members:
         raise MemberClientRefused(client.client_id)
-    refused = sorted(set(scopes) - MEMBER_SCOPES)
+    refused = sorted(set(scopes) - member_scopes(resource))
     if refused:
         raise MemberScopeRefused(refused)
     if needs_terms(user):
@@ -183,6 +194,32 @@ def record_members_changed(client: Client, *, actor: str, ip: str = "") -> None:
         client_id=client.client_id,
         ip=ip,
         detail={"client_id": client.client_id, "allows_members": client.allows_members},
+    )
+
+
+class ScopeNeverForMembers(Exception):
+    """`admin` and `editor` can never be marked for members (ADR 0003)."""
+
+
+def set_scope_members_allowed(scope: Scope, allowed: bool, *, actor: str, ip: str = "") -> None:
+    """Turn the scope's "members allowed" mark on or off (#47), with an audit record."""
+    if allowed and scope.name in NEVER_MEMBER_SCOPES:
+        raise ScopeNeverForMembers(scope.name)
+    Scope.objects.filter(pk=scope.pk).update(members_allowed=allowed)
+    scope.members_allowed = allowed
+    record_scope_members_changed(scope, actor=actor, ip=ip)
+
+
+def record_scope_members_changed(scope: Scope, *, actor: str, ip: str = "") -> None:
+    audit.record(
+        audit.SCOPE_MEMBERS_CHANGED,
+        actor=actor,
+        ip=ip,
+        detail={
+            "resource": scope.resource.url,
+            "scope": scope.name,
+            "members_allowed": scope.members_allowed,
+        },
     )
 
 

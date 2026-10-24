@@ -101,7 +101,7 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
         if member:
             # Last line (ADR 0003): /authorize and /token checked already; never sign past it.
             try:
-                check_member_grant(user, client, granted)
+                check_member_grant(user, client, granted, resource)
             except (
                 MemberInactive,
                 MemberClientRefused,
