@@ -121,13 +121,13 @@ def requested_scopes(request: OAuth2Request, client: Client, resource: Resource)
     return names
 
 
-def member_authorization(user: User, client: Client, scopes: list[str]) -> None:
+def member_authorization(user: User, client: Client, scopes: list[str], resource: Resource) -> None:
     """/authorize for a member (ADR 0003): `access_denied` from a client that does not allow
     members, `invalid_scope` for any scope a member may not hold (`admin`, `editor`, ...).
     MemberTermsPending (#37) is not an OAuth error: it goes up to the view, which shows the
     terms screen first."""
     try:
-        check_member_grant(user, client, scopes)
+        check_member_grant(user, client, scopes, resource)
     except MemberInactive:
         raise AccessDeniedError("This account is no longer active.") from None
     except MemberClientRefused:
@@ -138,12 +138,12 @@ def member_authorization(user: User, client: Client, scopes: list[str]) -> None:
         ) from None
 
 
-def member_token(user: User, client: Client, scopes: list[str]) -> None:
+def member_token(user: User, client: Client, scopes: list[str], resource: Resource) -> None:
     """/token for a member: the same rules again (the client's mark may have been turned off
     since the code or the refresh token was issued, the terms may have a new version); any
     refusal is `invalid_grant`."""
     try:
-        check_member_grant(user, client, scopes)
+        check_member_grant(user, client, scopes, resource)
     except (MemberInactive, MemberClientRefused, MemberScopeRefused, MemberTermsPending):
         raise InvalidGrantError("This grant is not available to member accounts here.") from None
 
@@ -195,7 +195,9 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
             if len(str(self.request.payload.data.get("nonce") or "")) > NONCE_MAX_LENGTH:
                 raise InvalidRequestError(f"'nonce' is longer than {NONCE_MAX_LENGTH}.")
             if isinstance(self.request.user, User):
-                member_authorization(self.request.user, self.request.client, self.scopes)
+                member_authorization(
+                    self.request.user, self.request.client, self.scopes, self.resource
+                )
         except OAuth2Error as error:
             error.redirect_uri = redirect_uri
             raise
@@ -242,7 +244,7 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
         values: list[str] = self.request.payload.datalist.get("resource", [])
         if values and values != [code.resource.url]:
             raise InvalidTargetError("'resource' is not the resource of the authorization code.")
-        member_token(code.user, self.request.client, code.scope.split())
+        member_token(code.user, self.request.client, code.scope.split(), code.resource)
 
     def create_token_response(self) -> tuple[int, TokenResponse, Headers]:
         code: AuthorizationCode = self.request.authorization_code
@@ -307,7 +309,7 @@ class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no 
         values: list[str] = self.request.payload.datalist.get("resource", [])
         if values and values != [token.family.resource.url]:
             raise InvalidTargetError("'resource' is not the resource of the refresh token.")
-        member_token(token.family.user, client, token.scope.split())
+        member_token(token.family.user, client, token.scope.split(), token.family.resource)
 
     def authenticate_refresh_token(self, refresh_token: str) -> RefreshToken | None:
         client: Client = self.request.client

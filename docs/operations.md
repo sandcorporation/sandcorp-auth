@@ -131,6 +131,8 @@ compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운�
 | 클라이언트 시크릿 재발급 | `manage clients rotate-secret --client-id <id>` 또는 admin 클라이언트 변경 화면 「시크릿 재발급」 | 옛 시크릿은 **즉시** 무효. 새 시크릿을 사이트 `.env`에 넣고 사이트를 다시 배포할 때까지 그 사이트 관리 화면 로그인이 실패한다 |
 | 클라이언트 목록 | `manage clients list` | `client_id  kind  registered_via  active|inactive  name  redirect_uris  members=on|off` |
 | 일반 사용자 허용 켜기·끄기 | `manage clients members --client-id <id> --allow` / `--deny`, 만들 때 `create-confidential … --allow-members`, 또는 admin 클라이언트 변경 화면 「일반 사용자 허용」 | 기본 꺼짐. 켜진 클라이언트만 일반 사용자(소셜 로그인 계정)에게 코드·토큰을 준다(ADR 0003). 감사 `client.members_changed`. 대표만 받는 기존 사이트(portfolio, 뉴스, metrics, oauth2-proxy)는 켜지 않는다 |
+| 스코프의 일반 사용자 허용 켜기·끄기(#47) | `manage scopes members --resource <url> --name <scope> --allow` / `--deny`, 또는 admin 리소스 변경 화면의 스코프 줄 「일반 사용자 허용」 | 기본 꺼짐. 켜진 스코프는 그 리소스를 요청한 일반 사용자도 받는다(리소스 기준 — 다른 리소스의 같은 이름은 상관없다). `admin`·`editor`는 켤 수 없다(종료 코드 1). 감사 `scope.members_changed`. Flow MCP: `manage scopes members --resource https://flow.sandcorp.co.kr/mcp --name flow.read --allow`, 같은 식으로 `--name flow.write` |
+| 스코프 목록 | `manage scopes list [--resource <url>]` | `리소스 URL  스코프  members=on|off`(탭 구분) |
 | 클라이언트 폐기 | admin → 클라이언트(`/<admin>/oauth/client/`) → 고르고 action 「선택한 클라이언트 폐기(비활성)」 | 이후 인가·토큰 요청이 거부된다 |
 | CIMD 캐시 비우기 | 같은 목록 → action 「CIMD 캐시 비우기」 | 다음 요청 때 메타데이터 문서를 다시 가져온다 |
 | 리다이렉트 URI 고치기 | admin 클라이언트 변경 화면의 `redirect_uris`(JSON 목록) | 기밀은 https만, 공개는 https 또는 `localhost`·`127.0.0.1`의 http. 정확히 일치 비교라 끝 슬래시도 값이다 |

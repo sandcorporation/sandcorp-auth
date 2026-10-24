@@ -349,9 +349,15 @@ def _deny(status: int, challenge: str) -> HttpResponse:
 |---|---|---|
 | `acct` | **없음** | `"member"` (문자열) |
 | `sub` | `"farrar142"` (`AUTH_OWNER_SUB`) | `"m_"` + ULID 26자, 예 `"m_01JB2Z3Y4X5W6V7T8S9R0Q1P2N"` (정규식 `^m_[0-7][0-9A-HJKMNP-TV-Z]{25}$`, 대소문자 구분) |
-| `scope` | 동의한 스코프 | `login`(리소스 스코프)만. `admin`·`editor`는 절대 없다 |
+| `scope` | 동의한 스코프 | `login`, 그리고 그 리소스가 「일반 사용자 허용」으로 표시한 스코프(아래 「받을 수 있는 스코프」). `admin`·`editor`는 절대 없다 |
 
 나머지 클레임(2절 표)은 같다. `sub`는 바뀌지 않는 키다 — 앱의 사용자·테넌트·역할은 `sub`로 묶고 이메일로 묶지 않는다.
+
+### 받을 수 있는 스코프(#47)
+
+일반 사용자가 받을 수 있는 스코프 = `login` ∪ 로그인 정보 스코프(`openid`·`profile`·`email`) ∪ **요청한 `resource`에 속하면서 auth 쪽에서 「일반 사용자 허용」(`Scope.members_allowed`)이 켜진 스코프**. 판정은 리소스 기준이다 — 다른 리소스에 같은 이름의 허용 스코프가 있어도 이 리소스에서 꺼져 있으면 거부한다. `admin`·`editor`는 어느 리소스에서도 켤 수 없다. 켜고 끄는 것은 조율자(`manage.py scopes members --resource <url> --name <scope> --allow|--deny`, `docs/operations.md`). 예: Flow MCP(`https://flow.sandcorp.co.kr/mcp`)의 `flow.read`·`flow.write`.
+
+사이트 쪽 함의: S1(필요한 스코프가 `scope`에 있는가)은 그대로다. 스코프는 「auth가 이 사용자에게 이 토큰을 서명해 줄 수 있다」일 뿐이고, **그 사용자가 실제로 무엇을 할 수 있는지(테넌트 멤버십·역할)는 사이트가 `sub`로 판정한다** — 예를 들어 `flow.write`가 실렸어도 쓰기는 그 테넌트의 Admin에게만 연다.
 
 ### 검증 규칙
 
@@ -379,11 +385,11 @@ A1~A3 위반은 401 `invalid_token`. 대표 전용 기능(그 사이트의 관�
 ### auth가 거절하는 경우
 
 - 「일반 사용자 허용」이 꺼진 클라이언트로 일반 사용자가 `/authorize`에 오면 동의 화면 없이 `redirect_uri?error=access_denied&state=…`로 돌아간다. 코드 교환·리프레시 사이에 표시가 꺼지면 `/token`이 400 `invalid_grant`.
-- 일반 사용자가 `login`·`openid`·`profile`·`email` 밖의 스코프(`admin`, `editor` 등)를 요청하면 `error=invalid_scope`로 돌아간다(빼고 발급하지 않는다).
+- 일반 사용자가 위 「받을 수 있는 스코프」 밖의 스코프(`admin`, `editor`, 그 리소스에서 허용되지 않은 스코프)를 요청하면 `error=invalid_scope`로 돌아간다(빼고 발급하지 않는다). 코드 교환·리프레시 사이에 스코프의 허용이 꺼지면 `/token`이 400 `invalid_grant`.
 - 탈퇴(#39): 탈퇴한 일반 사용자는 그 즉시 `/authorize`·`/token`(코드·리프레시 400 `invalid_grant`)·`/userinfo`(401)가 모두 거절된다. 이미 받은 액세스 토큰은 만료(최대 10분)까지 서명상 유효하므로, 사이트는 아래 11절의 `user.deleted` 웹훅을 받아 그 `sub`의 세션·데이터를 정리한다.
 - 약관(#37): 현재 약관 버전에 동의하지 않은 일반 사용자(첫 가입, 또는 새 버전 시행 뒤)는 `/authorize`에서 auth의 동의 화면을 먼저 보고, 동의하면 같은 인가 요청으로 돌아온다 — 사이트는 할 일이 없다. 다만 새 버전이 시행되면 그 사용자의 코드 교환·리프레시가 400 `invalid_grant`가 되므로, 리프레시 실패 때 사이트는 로그인(`/authorize`)부터 다시 시작한다.
 
-참조 구현은 `backend/tests/reference_validator.py`의 `validate_account_access_token`(반환값 `acct`가 `"owner"` 또는 `"member"`), 시험은 `backend/tests/test_reference_validator.py`와 `backend/tests/test_members.py`.
+참조 구현은 `backend/tests/reference_validator.py`의 `validate_account_access_token`(반환값 `acct`가 `"owner"` 또는 `"member"`), 시험은 `backend/tests/test_reference_validator.py`, `backend/tests/test_members.py`, `backend/tests/test_member_scopes.py`.
 
 ## 11. 탈퇴 웹훅(`user.deleted`)
 

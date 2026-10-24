@@ -28,7 +28,7 @@ from services.confidential_clients import (
     rotate_client_secret,
 )
 from services.consents import revoke_consent
-from services.members import record_members_changed
+from services.members import record_members_changed, record_scope_members_changed
 from services.redirect_uris import valid_redirect_uri
 from services.webhooks import InvalidWebhookUrl, set_webhook
 
@@ -63,9 +63,11 @@ def _ascii_safe(fields: Sequence[str], request: HttpRequest) -> list[str]:
 
 
 class ScopeInline(_ScopeInline):
+    """`members_allowed` (#47): `Scope.clean` refuses it on `admin`·`editor`."""
+
     model = Scope
     extra = 1
-    fields = ["name", "description"]
+    fields = ["name", "description", "members_allowed"]
 
 
 @admin.register(Resource)
@@ -74,6 +76,26 @@ class ResourceAdmin(_ResourceAdmin):
 
     list_display = ["name", "url"]
     inlines = [ScopeInline]
+
+    def save_formset(
+        self,
+        request: HttpRequest,
+        form: "forms.ModelForm[Resource]",
+        formset: "forms.BaseModelFormSet[Scope, forms.ModelForm[Scope]]",
+        change: bool,
+    ) -> None:
+        super().save_formset(request, form, formset, change)
+        deleted = getattr(formset, "deleted_forms", [])
+        for scope_form in formset.forms:
+            scope = scope_form.instance
+            if (
+                scope.pk
+                and "members_allowed" in scope_form.changed_data
+                and scope_form not in deleted
+            ):
+                record_scope_members_changed(
+                    scope, actor=request.user.get_username(), ip=client_ip(request)
+                )
 
 
 class ConfidentialClientAddForm(_ClientForm):

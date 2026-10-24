@@ -1,9 +1,11 @@
 from datetime import datetime
+from typing import Final
 
 from authlib.oauth2.rfc6749 import AuthorizationCodeMixin, ClientMixin, TokenMixin
 from django.conf import settings
 from django.contrib.auth.base_user import AbstractBaseUser
 from django.contrib.auth.hashers import check_password
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Case, Q, Value, When
 
@@ -60,20 +62,41 @@ class Resource(models.Model):
         return f"{self.name} ({self.url})"
 
 
+# Scope names a member may never hold, whatever the resource says (ADR 0003).
+NEVER_MEMBER_SCOPES: Final = ("admin", "editor")
+
+
 class Scope(models.Model):
-    """A permission inside one resource. `description` is what the owner reads on consent."""
+    """A permission inside one resource. `description` is what the owner reads on consent.
+
+    `members_allowed` (#47): a member (ADR 0003) may hold this scope of this resource. What the
+    member may actually do with it is the resource's call; auth only knows it may be signed.
+    `admin` and `editor` can never be marked (`NEVER_MEMBER_SCOPES`: `clean` and a check
+    constraint)."""
 
     resource = models.ForeignKey(Resource, on_delete=models.CASCADE, related_name="scopes")
     name = models.CharField(max_length=64)
     description = models.CharField(max_length=200)
+    members_allowed = models.BooleanField("일반 사용자 허용", default=False)
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["resource", "name"], name="oauth_scope_unique_name")
+            models.UniqueConstraint(fields=["resource", "name"], name="oauth_scope_unique_name"),
+            models.CheckConstraint(
+                condition=~Q(members_allowed=True, name__in=NEVER_MEMBER_SCOPES),
+                name="oauth_scope_never_member_admin_editor",
+            ),
         ]
 
     def __str__(self) -> str:
         return f"{self.resource.url} {self.name}"
+
+    def clean(self) -> None:
+        super().clean()
+        if self.members_allowed and self.name in NEVER_MEMBER_SCOPES:
+            raise ValidationError(
+                {"members_allowed": f"'{self.name}' 스코프는 일반 사용자에게 줄 수 없습니다."}
+            )
 
 
 class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no type stubs
