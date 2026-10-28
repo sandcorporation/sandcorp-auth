@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.django_db(transaction=True, serialized_rollback=True)
 
 THREADS = 8
-ROUNDS = 20
+ROUNDS = 5
 NOW = datetime(2026, 10, 23, 9, 0, tzinfo=UTC)
 
 

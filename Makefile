@@ -4,6 +4,9 @@
 db:  ## 로컬 시험·개발용 MySQL 26.10 (127.0.0.1:15444, 프로젝트 sandcorp-auth-dev)
 	docker compose up -d --wait db
 
+TEST_CPU_LIMIT ?= 1.0
+export TEST_CPU_LIMIT
+
 test: db
 	cd backend && uv run pytest
 
