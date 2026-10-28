@@ -15,3 +15,7 @@ os.environ.setdefault("KAKAO_CLIENT_ID", "test-kakao-rest-api-key")
 os.environ.setdefault("KAKAO_CLIENT_SECRET", "test-kakao-secret")
 
 from config.settings import *  # noqa: E402, F403
+
+# Fast password hashing for tests only (PBKDF2 dominated the suite). Production keeps Django's
+# default; tests/test_settings_guard.py pins that.
+PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
