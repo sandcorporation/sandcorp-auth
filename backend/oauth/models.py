@@ -10,7 +10,7 @@ from django.db import models
 from django.db.models import Case, Q, Value, When
 
 from adapters.clock import get_clock
-from services.redirect_uris import ALLOWED_GRANT_TYPES
+from services.redirect_uris import ALLOWED_GRANT_TYPES, redirect_uri_matches
 
 
 def _live_marker(condition: Q) -> models.GeneratedField:
@@ -174,7 +174,9 @@ class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no
         return " ".join(sorted(set((scope or "").split())))
 
     def check_redirect_uri(self, redirect_uri: str) -> bool:
-        return redirect_uri in self.redirect_uris
+        """authlib asks this at /authorize; loopback ports are free (`redirect_uri_matches`)."""
+        uris: list[str] = self.redirect_uris
+        return any(redirect_uri_matches(redirect_uri, uri) for uri in uris)
 
     def check_client_secret(self, client_secret: str) -> bool:
         if self.is_public or not self.secret_hash:

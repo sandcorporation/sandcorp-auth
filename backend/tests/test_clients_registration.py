@@ -177,7 +177,10 @@ def test_dcr_rejects_bad_redirect_uris(client: Client, redirect_uris: object) ->
 
 
 def test_dcr_accepts_loopback_http(client: Client) -> None:
-    status, _ = register(client, redirect_uris=["http://127.0.0.1:5555/cb", "http://localhost/cb"])
+    status, _ = register(
+        client,
+        redirect_uris=["http://127.0.0.1:5555/cb", "http://localhost/cb", "http://[::1]:5555/cb"],
+    )
     assert status == 201
 
 
