@@ -151,7 +151,7 @@ class ClientChangeForm(_ClientForm):
         for uri in checked:
             if not valid_redirect_uri(uri):
                 raise forms.ValidationError(
-                    "리다이렉트 URI가 규칙(https, 또는 localhost·127.0.0.1의 http)에 "
+                    "리다이렉트 URI가 규칙(https, 또는 localhost·127.0.0.1·[::1]의 http)에 "
                     f"맞지 않습니다: {uri}"
                 )
         return checked

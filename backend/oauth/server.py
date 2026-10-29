@@ -240,7 +240,7 @@ class DynamicClientRegistration(ClientRegistrationEndpoint):  # type: ignore[mis
         uris = data.get("redirect_uris")
         if not isinstance(uris, list) or not uris or not all(map(valid_redirect_uri, uris)):
             raise InvalidRedirectURIError(
-                "redirect_uris must be https, or http on localhost/127.0.0.1"
+                "redirect_uris must be https, or http on localhost/127.0.0.1/[::1]"
             )
         name = data.get("client_name")
         if not isinstance(name, str) or not name.strip():
