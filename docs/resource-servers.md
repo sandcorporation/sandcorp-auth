@@ -45,7 +45,7 @@ settings → `BearerConfig`/`LoginConfig`·`jwks_cache`·`token_transport`·`clo
 | sandcorp-metrics | `backend/oauth/auth.py` | 운영자 로그인 뷰 `oauth/admin_login.py`(사이트 몫) — #15 |
 | portfolio | `backend/oauth/auth.py` | #142 |
 | AI-Trend-News | `backend/core/auth_adapter.py` | #111 |
-| sandcorp-flow | #282 본문 기준: settings → `BearerConfig`/`LoginConfig`를 만드는 어댑터 한 파일. 경로는 **병합 뒤 확인** | 지우는 쪽은 `apps/tenants/resource_token.py`·`operator_login.py`. 병합은 secret 등록 뒤 |
+| sandcorp-flow | `backend/apps/tenants/authkit.py` | sandcorp-flow#285 (옛 `apps/tenants/resource_token.py`·`operator_login.py`는 지움) |
 
 ## 3. Docker 빌드: 키를 이미지에 남기지 않고 private 저장소 받기
 
