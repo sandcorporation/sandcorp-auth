@@ -9,3 +9,4 @@
 **/.pytest_cache
 backend/staticfiles
 docs
+clients

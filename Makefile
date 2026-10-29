@@ -1,5 +1,5 @@
 # 한 줄 명령 모음. 자세한 것은 CLAUDE.md 「명령」 절.
-.PHONY: db test lint typecheck check dev-backend prod-local prod-local-down sync-design
+.PHONY: db test lint typecheck check authkit-test authkit-lint authkit-typecheck dev-backend prod-local prod-local-down sync-design
 
 db:  ## 로컬 시험·개발용 MySQL 26.10 (127.0.0.1:15444, 프로젝트 sandcorp-auth-dev)
 	docker compose up -d --wait db
@@ -7,14 +7,24 @@ db:  ## 로컬 시험·개발용 MySQL 26.10 (127.0.0.1:15444, 프로젝트 sand
 TEST_CPU_LIMIT ?= 1.0
 export TEST_CPU_LIMIT
 
-test: db
+test: db authkit-test
 	cd backend && uv run pytest
 
-lint:
+lint: authkit-lint
 	cd backend && uv run ruff format --check . && uv run ruff check .
 
-typecheck:
+typecheck: authkit-typecheck
 	cd backend && uv run mypy .
+
+# 자원 서버 공용 패키지 sandcorp-authkit(clients/python, #54). DB가 필요 없다.
+authkit-test:
+	cd clients/python && uv run pytest
+
+authkit-lint:
+	cd clients/python && uv run ruff format --check . && uv run ruff check .
+
+authkit-typecheck:
+	cd clients/python && uv run mypy
 
 check: lint typecheck test
 
