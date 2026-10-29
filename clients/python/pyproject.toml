@@ -1,7 +1,7 @@
 [project]
 name = "sandcorp-authkit"
-version = "0.1.0"
-description = "Resource-server side of Sandcorp auth: access-token validation and RFC 9728 metadata"
+version = "0.2.0"
+description = "Resource-server side of Sandcorp auth: token validation, RFC 9728 metadata, Django bearer and operator login"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -9,8 +9,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# T2 fills this (Django·django-ninja integration). Empty on purpose for 0.1.0.
-django = []
+# Only `sandcorp_authkit.django` needs these; every other module works without them.
+django = [
+    "django>=6.1",
+    "django-ninja>=1.7",
+]
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -21,6 +24,9 @@ packages = ["src/sandcorp_authkit"]
 
 [dependency-groups]
 dev = [
+    "django>=6.1.2",
+    "django-ninja>=1.7.1",
+    "django-stubs>=6.1.2",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "ruff>=0.17.1",
