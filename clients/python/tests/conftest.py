@@ -1,19 +1,18 @@
 """Signing keys, a fake JWKS and a frozen clock for the authkit tests. No network."""
 
-import base64
 import os
 import resource
 import time
 from collections.abc import Generator
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
-import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+from sandcorp_authkit.testing import FakeJwks, SigningKey
+from sandcorp_authkit.testing import FixedClock as FrozenClock
 from sandcorp_authkit.tokens import JwksCache
+
+__all__ = ["FakeJwks", "FrozenClock", "SigningKey"]
 
 ISSUER = "https://auth.sandcorp.co.kr"
 RESOURCE = "https://sandcorp.co.kr/mcp"
@@ -22,56 +21,28 @@ MEMBER = "m_01JB2Z3Y4X5W6V7T8S9R0Q1P2N"
 START = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
 
 
-class FrozenClock:
-    def __init__(self, moment: datetime = START) -> None:
-        self.moment = moment
+def pytest_configure(config: pytest.Config) -> None:
+    """Minimal Django for tests/test_django.py. The other modules never import Django
+    (tests/test_extras.py proves it in a clean interpreter)."""
+    import django
+    from django.conf import settings
 
-    def now(self) -> datetime:
-        return self.moment
-
-    def advance(self, seconds: float) -> None:
-        self.moment += timedelta(seconds=seconds)
-
-
-@dataclass
-class SigningKey:
-    kid: str
-    private: Ed25519PrivateKey = field(default_factory=Ed25519PrivateKey.generate)
-
-    def jwk(self) -> dict[str, str]:
-        raw = self.private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-        x = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
-        return {
-            "kty": "OKP",
-            "crv": "Ed25519",
-            "x": x,
-            "kid": self.kid,
-            "alg": "EdDSA",
-            "use": "sig",
-        }
+    if not settings.configured:
+        settings.configure(
+            SECRET_KEY="authkit-tests",
+            ALLOWED_HOSTS=["testserver"],
+            ROOT_URLCONF=__name__,
+            USE_TZ=True,
+        )
+        django.setup()
 
 
-class FakeJwks:
-    """The JWKS endpoint: serves `document`, counts fetches, fails while `failing` is set."""
-
-    def __init__(self, *keys: SigningKey) -> None:
-        self.document: object = {"keys": [key.jwk() for key in keys]}
-        self.fetches = 0
-        self.failing = False
-
-    def serve(self, *keys: SigningKey) -> None:
-        self.document = {"keys": [key.jwk() for key in keys]}
-
-    def __call__(self) -> object:
-        self.fetches += 1
-        if self.failing:
-            raise OSError("JWKS unreachable")
-        return self.document
+urlpatterns: list[object] = []
 
 
 @pytest.fixture
 def clock() -> FrozenClock:
-    return FrozenClock()
+    return FrozenClock(START)
 
 
 @pytest.fixture
@@ -110,9 +81,7 @@ def claims_at(clock: FrozenClock, **overrides: object) -> dict[str, object]:
 def sign(
     key: SigningKey, claims: dict[str, object], *, headers: dict[str, object] | None = None
 ) -> str:
-    return jwt.encode(
-        claims, key.private, algorithm="EdDSA", headers=headers or {"kid": key.kid, "typ": "JWT"}
-    )
+    return key.sign(claims, headers=headers)
 
 
 # --- Per-test CPU budget (same rule as backend/tests/conftest.py, #51) ---
