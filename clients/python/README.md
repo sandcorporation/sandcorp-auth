@@ -13,10 +13,12 @@ Sandcorp 자원 서버(portfolio, metrics, news, flow)가 auth.sandcorp.co.kr의
 dependencies = ["sandcorp-authkit[django]"]
 
 [tool.uv.sources]
-sandcorp-authkit = { git = "https://github.com/sandcorporation/sandcorp-auth", subdirectory = "clients/python", tag = "authkit-v0.2.0" }
+sandcorp-authkit = { git = "ssh://git@github.com/sandcorporation/sandcorp-auth.git", subdirectory = "clients/python", tag = "authkit-v0.2.0" }
 ```
 
-또는 `uv add "sandcorp-authkit[django] @ git+https://github.com/sandcorporation/sandcorp-auth@authkit-v0.2.0#subdirectory=clients/python"`. 태그를 고정하고, 올릴 때는 저장소마다 PR 하나.
+또는 `uv add "sandcorp-authkit[django] @ git+ssh://git@github.com/sandcorporation/sandcorp-auth.git@authkit-v0.2.0#subdirectory=clients/python"`. 태그를 고정하고, 올릴 때는 저장소마다 PR 하나.
+
+저장소가 private이라 주소는 ssh다. Docker 빌드는 BuildKit SSH 전달(`RUN --mount=type=ssh`)로 키를 받고 키는 이미지에 남지 않는다. Jenkins/oracle 변형과 GitHub Actions 변형은 [`docs/resource-servers.md`](../../docs/resource-servers.md) 3절.
 
 ## 공개 API
 

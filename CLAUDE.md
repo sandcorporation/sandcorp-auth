@@ -24,6 +24,7 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 - 인가 서버 핵심(OAuth 프로토콜 처리)은 authlib다. `backend/oauth/server.py`의 `server`에 엔드포인트·그랜트를 등록하고, 손으로 짜는 것은 authlib에 없는 부분(CIMD, RFC 8707 `resource`, 동의 화면)뿐이다.
 - 스택과 명령은 `~/workspace/portfolio`와 같은 형태를 따른다: `backend/`(uv, Python 3.14, Django, django-ninja), `make test` / `make lint` / `make typecheck` / `make check`.
 - 배포·운영(env 변수, 첫 배포, 관리 명령, 프록시, 백업)은 `docs/operations.md`. 운영 절차가 바뀌는 티켓은 그 문서도 함께 고친다.
+- 자원 서버(portfolio·metrics·news·flow)가 공용 패키지 `sandcorp-authkit`을 쓰는 법(의존성, 어댑터 한 파일, Docker SSH 빌드, 운영 확인, 버전 올리기)은 `docs/resource-servers.md`, 결정 배경은 `docs/adr/0005-resource-server-authkit.md`.
 - 두 사이트(portfolio, 뉴스)의 토큰 검증 규칙은 `docs/resource-server-token-validation.md`(참조 구현 `backend/tests/reference_validator.py`). 일반 사용자를 받는 사이트는 그 문서 10절.
 
 ## 명령
