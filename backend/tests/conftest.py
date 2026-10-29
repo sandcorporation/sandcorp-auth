@@ -184,7 +184,7 @@ def member(db: None) -> User:
 
 
 @pytest.fixture
-def member_client(client: Client, member: User, frozen_clock: "FrozenClock") -> Client:
+def member_client(client: Client, member: User, frozen_clock: FrozenClock) -> Client:
     """A test client whose session is the member's (Django `login()` done)."""
     client.force_login(member)
     return client
@@ -319,7 +319,7 @@ class FakeProviders:
         self.requested: list[str] = []
 
     @staticmethod
-    def sign(claims: dict[str, object], *, key: "RSAPrivateKey | None" = None) -> str:
+    def sign(claims: dict[str, object], *, key: RSAPrivateKey | None = None) -> str:
         return jwt.encode(
             claims, key or _google_key(), algorithm="RS256", headers={"kid": GOOGLE_KID}
         )
@@ -330,7 +330,7 @@ class FakeProviders:
             status, {"content-type": "application/json"}, json.dumps(document).encode()
         )
 
-    def post_form(self, url: str, data: "Mapping[str, str]") -> FetchedDocument:
+    def post_form(self, url: str, data: Mapping[str, str]) -> FetchedDocument:
         from services.social_providers import GOOGLE_TOKEN_URL, KAKAO_TOKEN_URL
 
         self.posted.append((url, dict(data)))
@@ -350,7 +350,7 @@ class FakeProviders:
             return self._json({"access_token": access_token, "token_type": "bearer"})
         raise FetchError(f"no fake provider at {url}")
 
-    def get(self, url: str, *, headers: "Mapping[str, str]") -> FetchedDocument:
+    def get(self, url: str, *, headers: Mapping[str, str]) -> FetchedDocument:
         from services.social_providers import GOOGLE_JWKS_URL, KAKAO_USER_URL
 
         self.requested.append(url)
@@ -366,10 +366,10 @@ class FakeProviders:
 
 
 GOOGLE_KID = "test-google-kid"
-_GOOGLE_KEYS: "list[RSAPrivateKey]" = []
+_GOOGLE_KEYS: list[RSAPrivateKey] = []
 
 
-def _google_key() -> "RSAPrivateKey":
+def _google_key() -> RSAPrivateKey:
     """One RSA key per test run (generating one is slow)."""
     if not _GOOGLE_KEYS:
         _GOOGLE_KEYS.append(rsa.generate_private_key(public_exponent=65537, key_size=2048))
@@ -393,7 +393,7 @@ class FakeWebhooks:
         self.sent: list[tuple[str, bytes, dict[str, str]]] = []
         self.answers: list[int | FetchError] = []
 
-    def post(self, url: str, body: bytes, *, headers: "Mapping[str, str]") -> int:
+    def post(self, url: str, body: bytes, *, headers: Mapping[str, str]) -> int:
         self.sent.append((url, body, dict(headers)))
         answer = self.answers.pop(0) if self.answers else 200
         if isinstance(answer, FetchError):
@@ -461,7 +461,7 @@ TOKEN_FIELDS = {"access_token", "token_type", "expires_in", "refresh_token", "sc
 
 def exchange_code(
     client: Client, oauth_client: OAuthClient, code: str, verifier: str, /, **overrides: str | None
-) -> "TestResponse":
+) -> TestResponse:
     """POST /token with `grant_type=authorization_code` for `oauth_client` (a public client:
     `client_id` in the form). An override of None drops that field."""
     use_https(client)
@@ -490,7 +490,7 @@ def obtain_tokens(
 
 def refresh(
     client: Client, oauth_client: OAuthClient, refresh_token: str, /, **overrides: str | None
-) -> "TestResponse":
+) -> TestResponse:
     """POST /token with `grant_type=refresh_token` for `oauth_client` (a public client:
     `client_id` in the form). An override of None drops that field."""
     use_https(client)

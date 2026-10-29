@@ -87,7 +87,7 @@ def authorize_url(app: OAuthClient) -> str:
     return "/authorize?" + authorize_query(app, scope="login")
 
 
-def terms_redirect(response: "TestResponse") -> str:
+def terms_redirect(response: TestResponse) -> str:
     """The `next` of a redirect to the terms screen (fails if it is not one)."""
     assert response.status_code == 302, response.content
     location = urlsplit(response["Location"])
@@ -95,7 +95,7 @@ def terms_redirect(response: "TestResponse") -> str:
     return parse_qs(location.query)["next"][0]
 
 
-def agree(client: Client, next_url: str, **fields: str | list[str]) -> "TestResponse":
+def agree(client: Client, next_url: str, **fields: str | list[str]) -> TestResponse:
     page = client.get("/terms?" + urlencode({"next": next_url}))
     assert page.status_code == 200, page.content
     documents = [str(pk) for pk in page.context["documents"].values_list("pk", flat=True)]

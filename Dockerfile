@@ -4,7 +4,7 @@
 
 # mysqlclient has no Linux wheel: build it against the MariaDB Connector/C headers in a builder
 # stage, and ship only the shared library (libmariadb3) in the runtime image.
-FROM python:3.13-slim AS build
+FROM python:3.14-slim AS build
 COPY --from=ghcr.io/astral-sh/uv:0.12.9 /uv /usr/local/bin/uv
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_COMPILE_BYTECODE=1 \
@@ -17,7 +17,7 @@ WORKDIR /app/backend
 COPY backend/pyproject.toml backend/uv.lock backend/.python-version ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 RUN apt-get update \
  && apt-get install -y --no-install-recommends libmariadb3 \
  && rm -rf /var/lib/apt/lists/*

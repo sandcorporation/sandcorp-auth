@@ -179,7 +179,7 @@ def _successes(results: Sequence[object]) -> int:
     return sum(getattr(r, "status_code", None) == 200 for r in results)
 
 
-def _exchange(oauth_client: OAuthClient, code: str, verifier: str) -> "TestResponse":
+def _exchange(oauth_client: OAuthClient, code: str, verifier: str) -> TestResponse:
     return exchange_code(Client(), oauth_client, code, verifier)
 
 

@@ -144,7 +144,7 @@ def member_token(user: User, client: Client, scopes: list[str], resource: Resour
     refusal is `invalid_grant`."""
     try:
         check_member_grant(user, client, scopes, resource)
-    except (MemberInactive, MemberClientRefused, MemberScopeRefused, MemberTermsPending):
+    except MemberInactive, MemberClientRefused, MemberScopeRefused, MemberTermsPending:
         raise InvalidGrantError("This grant is not available to member accounts here.") from None
 
 

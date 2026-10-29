@@ -86,7 +86,7 @@ def member_tokens(client: Client, app: OAuthClient) -> dict[str, str]:
     return tokens
 
 
-def withdraw(client: Client, phrase: str = CONFIRM_PHRASE) -> "TestResponse":
+def withdraw(client: Client, phrase: str = CONFIRM_PHRASE) -> TestResponse:
     return client.post("/account/withdraw", {"confirm": phrase})
 
 
