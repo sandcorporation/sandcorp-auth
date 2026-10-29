@@ -67,7 +67,7 @@ def basic(client_id: str, secret: str) -> str:
 
 def post_token(
     client: Client, form: dict[str, str | None], authorization: str | None = None
-) -> "TestResponse":
+) -> TestResponse:
     """POST /token over https; `authorization` is the Authorization header, None for none."""
     use_https(client)
     body = {key: value for key, value in form.items() if value is not None}
@@ -107,7 +107,7 @@ def refresh_form(refresh_token: str | int) -> dict[str, str | None]:
     return {"grant_type": "refresh_token", "refresh_token": str(refresh_token)}
 
 
-def oauth_error(response: "TestResponse", status: int) -> str:
+def oauth_error(response: TestResponse, status: int) -> str:
     """The RFC 6749 5.2 error code, after checking the status and the body's shape."""
     assert response.status_code == status, response.content
     body = response.json()

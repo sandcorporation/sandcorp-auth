@@ -83,7 +83,7 @@ def members_proxy(db: None, signing_key: SigningKey) -> Proxy:
     return issued.client, issued.secret
 
 
-def redirect_error(response: "TestResponse") -> str:
+def redirect_error(response: TestResponse) -> str:
     """The `error` an /authorize response sent back to the client's redirect URI."""
     assert response.status_code == 302, response.content
     query = parse_qs(urlsplit(response["Location"]).query)

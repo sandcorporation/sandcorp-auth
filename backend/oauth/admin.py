@@ -80,8 +80,8 @@ class ResourceAdmin(_ResourceAdmin):
     def save_formset(
         self,
         request: HttpRequest,
-        form: "forms.ModelForm[Resource]",
-        formset: "forms.BaseModelFormSet[Scope, forms.ModelForm[Scope]]",
+        form: forms.ModelForm[Resource],
+        formset: forms.BaseModelFormSet[Scope, forms.ModelForm[Scope]],
         change: bool,
     ) -> None:
         super().save_formset(request, form, formset, change)
@@ -201,7 +201,7 @@ class ClientAdmin(_ClientAdmin):
         obj: Client | None = None,
         change: bool = False,
         **kwargs: Any,  # noqa: ANN401  # passed through to ModelAdmin.get_form untouched
-    ) -> "type[forms.ModelForm[Client]]":
+    ) -> type[forms.ModelForm[Client]]:
         if obj is None:
             kwargs["form"] = ConfidentialClientAddForm
             kwargs["fields"] = ["name", "redirect_uris_text"]
@@ -209,7 +209,7 @@ class ClientAdmin(_ClientAdmin):
             kwargs["form"] = ClientChangeForm
         return super().get_form(request, obj, change, **kwargs)
 
-    def get_fieldsets(self, request: HttpRequest, obj: Client | None = None) -> "_FieldsetSpec":
+    def get_fieldsets(self, request: HttpRequest, obj: Client | None = None) -> _FieldsetSpec:
         if obj is None:
             return [(None, {"fields": ["name", "redirect_uris_text"]})]
         return super().get_fieldsets(request, obj)
@@ -221,7 +221,7 @@ class ClientAdmin(_ClientAdmin):
         self,
         request: HttpRequest,
         obj: Client,
-        form: "forms.ModelForm[Client]",
+        form: forms.ModelForm[Client],
         change: bool,
     ) -> None:
         if change:

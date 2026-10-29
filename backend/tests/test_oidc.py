@@ -89,7 +89,7 @@ def unverified(raw: str | int) -> Claims:
     return claims
 
 
-def userinfo(client: Client, token: str | int | None, method: str = "get") -> "TestResponse":
+def userinfo(client: Client, token: str | int | None, method: str = "get") -> TestResponse:
     headers = {} if token is None else {"HTTP_AUTHORIZATION": f"Bearer {token}"}
     response: TestResponse = getattr(client, method)("/userinfo", **headers)
     return response

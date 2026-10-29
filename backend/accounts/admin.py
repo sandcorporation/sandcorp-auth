@@ -51,7 +51,7 @@ class TermsDocumentAdmin(_TermsDocumentAdmin):
         self,
         request: HttpRequest,
         obj: TermsDocument,
-        form: "forms.ModelForm[TermsDocument]",
+        form: forms.ModelForm[TermsDocument],
         change: bool,
     ) -> None:
         obj.created_at = get_clock().now()

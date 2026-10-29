@@ -22,13 +22,13 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 - PR CI는 없다. 시험·린트·타입 검사는 로컬에서 돌린다. 통과하면 작업자가 바로 squash 병합한다(main 직접 push 금지).
 - 배포와 서버 설정(env 파일, NPMplus, DNS, OCI)은 조율자가 다룬다. 작업자는 원격 호스트에 쓰지 않는다.
 - 인가 서버 핵심(OAuth 프로토콜 처리)은 authlib다. `backend/oauth/server.py`의 `server`에 엔드포인트·그랜트를 등록하고, 손으로 짜는 것은 authlib에 없는 부분(CIMD, RFC 8707 `resource`, 동의 화면)뿐이다.
-- 스택과 명령은 `~/workspace/portfolio`와 같은 형태를 따른다: `backend/`(uv, Python 3.13, Django, django-ninja), `make test` / `make lint` / `make typecheck` / `make check`.
+- 스택과 명령은 `~/workspace/portfolio`와 같은 형태를 따른다: `backend/`(uv, Python 3.14, Django, django-ninja), `make test` / `make lint` / `make typecheck` / `make check`.
 - 배포·운영(env 변수, 첫 배포, 관리 명령, 프록시, 백업)은 `docs/operations.md`. 운영 절차가 바뀌는 티켓은 그 문서도 함께 고친다.
 - 두 사이트(portfolio, 뉴스)의 토큰 검증 규칙은 `docs/resource-server-token-validation.md`(참조 구현 `backend/tests/reference_validator.py`). 일반 사용자를 받는 사이트는 그 문서 10절.
 
 ## 명령
 
-저장소 루트에서 `make <대상>`. 백엔드는 `backend/`(uv, Python 3.13). 프론트엔드는 없다.
+저장소 루트에서 `make <대상>`. 백엔드는 `backend/`(uv, Python 3.14). 프론트엔드는 없다.
 
 - 시험: `make test`. MySQL을 쓴다 — `make db`가 `mysql:26.10.0`(`utf8mb4_0900_as_cs`)을 `sandcorp-auth-dev` 프로젝트로 `127.0.0.1:15444`에 띄운다(`make test`가 알아서 부른다; 13306은 쓰지 않는다). 시험 설정 `config.test_settings`가 `DB_PORT=15444`를 기본으로 두고, 시험 DB `test_sandcorp_auth`도 as_cs로 만든다. 전체 약 25초(시험 설정 `config.test_settings`가 비밀번호 해시를 MD5로 둔다 — 운영은 PBKDF2 그대로, `tests/test_settings_guard.py`가 지킨다).
 - 시험 시간 한도(#51, 스킬 `test-speed-budget`): 시험 하나의 **본문 CPU(이 프로세스+자식, 픽스처 제외) 1.0초**를 넘으면 통과해도 실패로 바꾼다(`tests/conftest.py` 끝의 훅). 목표는 0.5초(붐비면 CPU 초가 부푼다). 값은 env `TEST_CPU_LIMIT`(0이면 끔; Makefile 기본 1.0, 붐비는 기계는 `TEST_CPU_LIMIT=1.5 make test`). 한도를 올리거나 시험별 예외를 두지 않고 원인을 줄인다(올리는 것은 저장소 주인 결정). 분포 보기: `cd backend && uv run pytest --junitxml=/tmp/j.xml && python3 ~/.claude/skills/test-speed-budget/snippets/junit_slowest.py /tmp/j.xml 15 0.5`(junit 속성 `cpu_seconds`는 본문만, `time`은 준비 포함). 새 시험이 한도에 걸리면 해시·데이터 양·스레드 라운드 수부터 의심한다. e2e·프런트는 없다.

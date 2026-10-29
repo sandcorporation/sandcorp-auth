@@ -79,14 +79,14 @@ def google_claims(query: dict[str, str], **overrides: object) -> dict[str, objec
     return {key: value for key, value in claims.items() if value is not None}
 
 
-def callback(client: Client, provider: str, query: dict[str, str], **params: str) -> "TestResponse":
+def callback(client: Client, provider: str, query: dict[str, str], **params: str) -> TestResponse:
     values = {"state": query["state"], "code": "the-code", **params}
     return client.get(f"/login/{provider}/callback?" + urlencode(values))
 
 
 def google_login(
     client: Client, fake: FakeProviders, next_url: str, **overrides: object
-) -> "TestResponse":
+) -> TestResponse:
     query = start(client, "google", next_url)
     fake.google_codes["the-code"] = google_claims(query, **overrides)
     return callback(client, "google", query)
@@ -101,7 +101,7 @@ def kakao_user(kakao_id: int = 4123456789, **account: object) -> dict[str, objec
 
 def kakao_login(
     client: Client, fake: FakeProviders, next_url: str, user: dict[str, object]
-) -> "TestResponse":
+) -> TestResponse:
     query = start(client, "kakao", next_url)
     fake.kakao_codes["the-code"] = user
     return callback(client, "kakao", query)
@@ -124,7 +124,7 @@ def session_user(client: Client) -> User | None:
     return User.objects.filter(pk=user_id).first() if user_id else None
 
 
-def assert_refused(response: "TestResponse", fake: FakeProviders) -> None:
+def assert_refused(response: TestResponse, fake: FakeProviders) -> None:
     assert response.status_code == 400, response.content
     assert "_auth_user_id" not in response.client.session
     assert not ExternalIdentity.objects.filter(provider_sub=NEW_GOOGLE_SUB).exists()
@@ -423,7 +423,7 @@ def test_the_notice_expires(
 # --- linking and unlinking -----------------------------------------------------------------
 
 
-def link(client: Client, fake: FakeProviders, provider: str, **profile: object) -> "TestResponse":
+def link(client: Client, fake: FakeProviders, provider: str, **profile: object) -> TestResponse:
     response = client.post(f"/account/identities/link/{provider}")
     assert response.status_code == 302, response.content
     query = {k: v[0] for k, v in parse_qs(urlsplit(response["Location"]).query).items()}

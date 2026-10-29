@@ -39,7 +39,7 @@ def stored(raw: str | int) -> RefreshToken:
     return RefreshToken.objects.get(token_hash=hash_refresh_token(str(raw)))
 
 
-def error_of(response: "TestResponse") -> str:
+def error_of(response: TestResponse) -> str:
     assert response.status_code in (400, 401), response.content
     error: str = response.json()["error"]
     return error
@@ -50,7 +50,7 @@ def claims(access_token: str | int) -> dict[str, object]:
     return decoded
 
 
-def revoke(client: Client, oauth_client: OAuthClient, token: str, **extra: str) -> "TestResponse":
+def revoke(client: Client, oauth_client: OAuthClient, token: str, **extra: str) -> TestResponse:
     use_https(client)
     return client.post("/revoke", {"token": token, "client_id": oauth_client.client_id, **extra})
 
