@@ -4,7 +4,7 @@ auth.sandcorp.co.kr(sandcorp-auth)를 배포하고 운영하는 사람(조율자
 
 ## 0. 구성 한눈에
 
-- oracle 호스트에서 Jenkins가 main 푸시마다 `deploy/deploy.sh`를 돈다(`Jenkinsfile`): 이미지 빌드 → DB 접속 대기(`manage.py check --database default`, 2초 간격 30번) → `migrate` → web 교체 → 헬스 확인.
+- oracle 호스트에서 Jenkins가 main 푸시마다 `deploy/deploy.sh`를 돈다(`Jenkinsfile`): 이미지는 oracle 밖(macos, 못 잡으면 sub)에서 구워 ghcr에 올리고([`ops/offhost-build.md`](ops/offhost-build.md), 되돌리기 `ROLLBACK_SHA` 포함), oracle은 pull만 한다 → DB 접속 대기(`manage.py check --database default`, 2초 간격 30번) → `migrate` → web 교체 → 헬스 확인.
 - compose 프로젝트 이름 `sandcorp-auth`, 파일 `docker-compose.prod.yml` + `docker-compose.oracle.yml`, 서비스 `web`(gunicorn, :8000) 하나. 컨테이너 이름은 `sandcorp-auth-web-1`.
 - DB는 compose 밖의 **OCI MySQL HeatWave**(MySQL 26.10, 같은 VCN의 사설 IP, 데이터베이스 `utf8mb4` / `utf8mb4_0900_as_cs`)다. web이 `.env`의 `DB_*`로 붙는다(ADR [0002](adr/0002-mysql-heatwave.md)). Postgres에서 옮길 때의 절차는 [`ops/db-migration.md`](ops/db-migration.md).
 - web은 docker 브리지 게이트웨이 `172.17.0.1:18093`에만 묶인다. 바깥은 NPMplus가 TLS를 끝내고 `https://auth.sandcorp.co.kr` → `http://172.17.0.1:18093`으로 넘긴다.
@@ -278,7 +278,7 @@ docker exec sandcorp-auth-web-1 python manage.py dumpdata --natural-foreign --in
 
 **`SIGNING_KEY_ENCRYPTION_KEY`를 잃었을 때**: DB의 서명 개인 키를 복호화할 수 없어 토큰 발급이 실패한다. 계정·클라이언트는 그대로이므로 새 키로 서명 키만 다시 만든다.
 
-1. 새 Fernet 키를 만들어 `.env`의 `SIGNING_KEY_ENCRYPTION_KEY`를 바꾸고 web을 다시 띄운다(Jenkins 재실행 또는 `docker compose -p sandcorp-auth -f docker-compose.prod.yml -f docker-compose.oracle.yml up -d --no-deps --force-recreate web`).
+1. 새 Fernet 키를 만들어 `.env`의 `SIGNING_KEY_ENCRYPTION_KEY`를 바꾸고 web을 다시 띄운다(Jenkins 재실행. 손으로 하려면 `ops/offhost-build.md`의 「이 저장소의 사정」대로 `AUTH_IMAGE`를 줘야 한다).
 2. `manage signing_keys rotate` — 새 활성 키가 생기고 옛 키는 은퇴한다. 옛 키로 서명된 토큰은 어차피 검증할 수 없게 된 것이니 기다릴 것은 없다.
 3. 사이트는 모르는 `kid`를 만나면 JWKS를 다시 받으므로 따로 할 일은 없다. 이미 나간 액세스 토큰은 무효가 되고, 리프레시 토큰(DB 저장, 서명과 무관)은 그대로 쓸 수 있다.
 
