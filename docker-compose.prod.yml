@@ -9,7 +9,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: sandcorp-auth-web:latest
+    image: ${AUTH_IMAGE:-sandcorp-auth-web:latest}
     env_file: [.env]
     environment:
       DJANGO_DEBUG: "0"

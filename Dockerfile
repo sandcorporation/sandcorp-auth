@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # One image: Django static files (admin) are collected at build time and served by whitenoise.
-# Built natively on oracle (arm64) by Jenkins; also builds on x86 for local checks.
+# Built off-host as linux/arm64 by Jenkins (macos, else sub; scripts/ci/build-image.sh), oracle only pulls; also builds on x86 for local checks.
 
 # mysqlclient has no Linux wheel: build it against the MariaDB Connector/C headers in a builder
 # stage, and ship only the shared library (libmariadb3) in the runtime image.
