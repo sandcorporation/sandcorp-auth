@@ -56,7 +56,7 @@ pipeline {
             node('laurio-staging') { buildImage('home') }
           } else {
             // auto: macos를 잡으면 거기서 끝까지 굽는다. 대기가 길어지면 watchdog가 실패해 failFast로 mac 대기를
-            // 걷어 내고(대기열 항목이 취소된다) home로 간다. 실행기를 잡은 뒤의 실패는 그대로 실패다.
+            // 걷어 내고(대기열 항목이 취소된다) home으로 간다. 실행기를 잡은 뒤의 실패는 그대로 실패다.
             env.MAC_ACQUIRED = 'false'
             def waitSec = (params.MAC_WAIT_SECONDS ?: '180') as int
             try {

@@ -12,7 +12,7 @@ main push ─▶ 이미지 빌드 ───────────────�
                home(built-in, QEMU로 arm64)         (빌드 없음)
 ```
 
-- **노드를 못 잡았을 때만** home로 넘어간다. macos에서 빌드가 실패하면 실패로 끝낸다(다시 home로 굽지 않는다).
+- **노드를 못 잡았을 때만** home으로 넘어간다. macos에서 빌드가 실패하면 실패로 끝낸다(다시 home으로 굽지 않는다).
 - 빌드 노드는 콘솔(`== 빌드 노드: macos (...)`)과 빌드 설명(`<sha12> · 빌드 macos · oracle pull`)·디스코드 알림에 남는다.
 - 이미지: `ghcr.io/sandcorporation/sandcorp-auth:<커밋 sha 40자>`, 레이블 `org.opencontainers.image.source`·`revision`. 빌드 캐시는 `sandcorp-auth-buildcache:arm64`(레지스트리, `mode=max`).
 - 자격: ghcr 쓰기 `ghcr-push-token`(Secret text, codemit과 공유), 이 저장소는 비공개 의존성을 이미지에 넣지 않아(`clients`는 `.dockerignore`) SSH 키가 필요 없다. oracle은 호스트 docker 설정에 있는 ghcr **읽기** 로그인을 쓴다(sandcorp-flow와 같다).
