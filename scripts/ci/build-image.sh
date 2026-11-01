@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# linux/arm64 배포 이미지를 굽고 ghcr 에 올린다(#68). Jenkinsfile 의 「이미지 빌드」 단계가 macos 또는 sub 에서 부른다.
+# linux/arm64 배포 이미지를 굽고 ghcr 에 올린다(#68). Jenkinsfile 의 「이미지 빌드」 단계가 macos 또는 home 에서 부른다.
 #
-#   scripts/ci/build-image.sh <macos|sub>
+#   scripts/ci/build-image.sh <macos|home>
 #
 # 환경변수: GHCR_TOKEN(ghcr 쓰기 토큰, Jenkins `ghcr-push-token`),
 #           AUTH_IMAGE_REPO(기본 ghcr.io/sandcorporation/sandcorp-auth), AUTH_BUILDER(buildx 빌더 이름)
-# 결과: `<repo>:<커밋 sha 40자>` 한 태그. 빌드 캐시는 `<repo>-buildcache:arm64`(레지스트리) — QEMU(sub)에서 특히 크다.
+# 결과: `<repo>:<커밋 sha 40자>` 한 태그. 빌드 캐시는 `<repo>-buildcache:arm64`(레지스트리) — QEMU(home)에서 특히 크다.
 # bash 3.2(macos 노드)에서도 돈다. 노드의 docker 설정은 건드리지 않고 임시 DOCKER_CONFIG 에만 토큰을 적는다.
 set -euo pipefail
 
 where="${1:-}"
-case "$where" in macos|sub) ;; *) echo "쓰는 법: $0 <macos|sub>" >&2; exit 2 ;; esac
+case "$where" in macos|home) ;; *) echo "쓰는 법: $0 <macos|home>" >&2; exit 2 ;; esac
 
 cd "$(dirname "$0")/../.."
 repo="${AUTH_IMAGE_REPO:-ghcr.io/sandcorporation/sandcorp-auth}"

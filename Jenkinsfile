@@ -1,7 +1,7 @@
-// main에 푸시하면: 이미지를 oracle 밖에서 굽고(mac 우선, 못 잡으면 sub) ghcr에 올린 뒤, oracle은 받아서 교체만 한다(#68).
+// main에 푸시하면: 이미지를 oracle 밖에서 굽고(mac 우선, 못 잡으면 home) ghcr에 올린 뒤, oracle은 받아서 교체만 한다(#68).
 // 패턴 설명·다른 저장소로 옮기는 법: docs/ops/offhost-build.md
 //
-//   이미지 빌드   macos(M4, arm64 네이티브) → 3분(MAC_WAIT_SECONDS) 안에 실행기를 못 잡으면 sub(built-in, QEMU).
+//   이미지 빌드   macos(M4, arm64 네이티브) → 3분(MAC_WAIT_SECONDS) 안에 실행기를 못 잡으면 home(built-in, QEMU).
 //                 넘어가는 건 「노드를 못 잡았을 때」뿐이다 — mac에서 빌드가 실패하면 실패로 끝낸다.
 //   배포(oracle)  굽지 않는다. ghcr.io/sandcorporation/sandcorp-auth:<커밋 sha>를 pull해 migrate·교체·헬스 확인.
 //
@@ -11,7 +11,7 @@
 
 def IMAGE_REPO = 'ghcr.io/sandcorporation/sandcorp-auth'
 
-// 이 노드에서 체크아웃하고 이미지를 굽는다. where = macos | sub. 커밋 sha는 env.DEPLOY_SHA에 남긴다.
+// 이 노드에서 체크아웃하고 이미지를 굽는다. where = macos | home. 커밋 sha는 env.DEPLOY_SHA에 남긴다.
 def buildImage(String where) {
   def scmVars = checkout scm
   env.DEPLOY_SHA = scmVars.GIT_COMMIT
@@ -30,13 +30,13 @@ pipeline {
 
   options {
     disableConcurrentBuilds()
-    timeout(time: 90, unit: 'MINUTES')   // sub(QEMU)에서 캐시 없이 구우면 길다
+    timeout(time: 90, unit: 'MINUTES')   // home(QEMU)에서 캐시 없이 구우면 길다
     timestamps()
   }
 
   parameters {
-    choice(name: 'BUILDER', choices: ['auto', 'macos', 'sub'], description: 'auto=macos 먼저, 못 잡으면 sub. 시험용으로 강제 선택')
-    string(name: 'MAC_WAIT_SECONDS', defaultValue: '180', description: 'auto에서 macos 실행기를 기다리는 시간(초). 넘으면 sub')
+    choice(name: 'BUILDER', choices: ['auto', 'macos', 'home'], description: 'auto=macos 먼저, 못 잡으면 home. 시험용으로 강제 선택')
+    string(name: 'MAC_WAIT_SECONDS', defaultValue: '180', description: 'auto에서 macos 실행기를 기다리는 시간(초). 넘으면 home')
     string(name: 'ROLLBACK_SHA', defaultValue: '', description: '비우지 않으면 빌드 없이 이 커밋 sha의 이미지(ghcr)로 되돌린다 — docs/ops/offhost-build.md')
   }
 
@@ -52,11 +52,11 @@ pipeline {
           def b = params.BUILDER
           if (b == 'macos') {
             node('macos') { buildImage('macos') }
-          } else if (b == 'sub') {
-            node('laurio-staging') { buildImage('sub') }
+          } else if (b == 'home') {
+            node('laurio-staging') { buildImage('home') }
           } else {
             // auto: macos를 잡으면 거기서 끝까지 굽는다. 대기가 길어지면 watchdog가 실패해 failFast로 mac 대기를
-            // 걷어 내고(대기열 항목이 취소된다) sub로 간다. 실행기를 잡은 뒤의 실패는 그대로 실패다.
+            // 걷어 내고(대기열 항목이 취소된다) home로 간다. 실행기를 잡은 뒤의 실패는 그대로 실패다.
             env.MAC_ACQUIRED = 'false'
             def waitSec = (params.MAC_WAIT_SECONDS ?: '180') as int
             try {
@@ -81,8 +81,8 @@ pipeline {
               )
             } catch (err) {
               if (env.MAC_ACQUIRED == 'true') { throw err }
-              echo "macos를 못 잡아 sub에서 굽는다: ${err.getMessage()}"
-              node('laurio-staging') { buildImage('sub') }
+              echo "macos를 못 잡아 home에서 굽는다: ${err.getMessage()}"
+              node('laurio-staging') { buildImage('home') }
             }
           }
         }

@@ -4,7 +4,7 @@ auth.sandcorp.co.kr(sandcorp-auth)를 배포하고 운영하는 사람(조율자
 
 ## 0. 구성 한눈에
 
-- oracle 호스트에서 Jenkins가 main 푸시마다 `deploy/deploy.sh`를 돈다(`Jenkinsfile`): 이미지는 oracle 밖(macos, 못 잡으면 sub)에서 구워 ghcr에 올리고([`ops/offhost-build.md`](ops/offhost-build.md), 되돌리기 `ROLLBACK_SHA` 포함), oracle은 pull만 한다 → DB 접속 대기(`manage.py check --database default`, 2초 간격 30번) → `migrate` → web 교체 → 헬스 확인.
+- oracle 호스트에서 Jenkins가 main 푸시마다 `deploy/deploy.sh`를 돈다(`Jenkinsfile`): 이미지는 oracle 밖(macos, 못 잡으면 home)에서 구워 ghcr에 올리고([`ops/offhost-build.md`](ops/offhost-build.md), 되돌리기 `ROLLBACK_SHA` 포함), oracle은 pull만 한다 → DB 접속 대기(`manage.py check --database default`, 2초 간격 30번) → `migrate` → web 교체 → 헬스 확인.
 - compose 프로젝트 이름 `sandcorp-auth`, 파일 `docker-compose.prod.yml` + `docker-compose.oracle.yml`, 서비스 `web`(gunicorn, :8000) 하나. 컨테이너 이름은 `sandcorp-auth-web-1`.
 - DB는 compose 밖의 **OCI MySQL HeatWave**(MySQL 26.10, 같은 VCN의 사설 IP, 데이터베이스 `utf8mb4` / `utf8mb4_0900_as_cs`)다. web이 `.env`의 `DB_*`로 붙는다(ADR [0002](adr/0002-mysql-heatwave.md)). Postgres에서 옮길 때의 절차는 [`ops/db-migration.md`](ops/db-migration.md).
 - web은 docker 브리지 게이트웨이 `172.17.0.1:18093`에만 묶인다. 바깥은 NPMplus가 TLS를 끝내고 `https://auth.sandcorp.co.kr` → `http://172.17.0.1:18093`으로 넘긴다.
