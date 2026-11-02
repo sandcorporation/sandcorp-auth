@@ -36,6 +36,6 @@ Jenkins `sandcorp-auth`를 「Build with Parameters」로 `ROLLBACK_SHA=<되돌�
 - 이미지 변수는 `AUTH_IMAGE`(compose `image: ${AUTH_IMAGE:-sandcorp-auth-web:latest}`). 로컬 `make prod-local`은 변수가 없어 빌드한다.
 - 스크립트 `scripts/ci/build-image.sh`, 환경 `AUTH_IMAGE_REPO`·`AUTH_BUILDER`(`auth-images` 빌더).
 - 운영 `.env`·NPMplus·DB는 그대로다. 손으로 `docker compose up`을 하면 `AUTH_IMAGE`가 없어 로컬 이름의 이미지를 찾으니, 운영에서 web을 다시 띄울 때는 Jenkins를 돌리거나 `AUTH_IMAGE=ghcr.io/sandcorporation/sandcorp-auth:<sha> docker compose … up -d --no-build --no-deps --force-recreate web`로 한다.
-- Jenkins 잡 `sandcorp-auth`는 노드 `macos`·`laurio-staging`(home)·`oracle`을 쓰고 자격증명 `ghcr-push-token`, `discord-deploy-webhook`을 이름으로 부른다.
+- Jenkins 잡 `sandcorp-auth`는 노드 `macos`·`built-in`(home)·`oracle`을 쓰고 자격증명 `ghcr-push-token`, `discord-deploy-webhook`을 이름으로 부른다.
 - 노드 대기 시간 제한은 `parallel(failFast)` + `sleep` 감시다. `Jenkins.instance` 같은 스크립트 승인 API는 쓰지 않는다.
 - oracle 호스트의 docker가 `ghcr.io`에 읽기 로그인돼 있어야 한다. 패키지가 새로 만들어지면 ghcr에서 이 저장소에 접근 권한이 있는지 본다.

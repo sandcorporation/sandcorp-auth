@@ -53,7 +53,7 @@ pipeline {
           if (b == 'macos') {
             node('macos') { buildImage('macos') }
           } else if (b == 'home') {
-            node('laurio-staging') { buildImage('home') }
+            node('built-in') { buildImage('home') }
           } else {
             // auto: macos를 잡으면 거기서 끝까지 굽는다. 대기가 길어지면 watchdog가 실패해 failFast로 mac 대기를
             // 걷어 내고(대기열 항목이 취소된다) home으로 간다. 실행기를 잡은 뒤의 실패는 그대로 실패다.
@@ -82,7 +82,7 @@ pipeline {
             } catch (err) {
               if (env.MAC_ACQUIRED == 'true') { throw err }
               echo "macos를 못 잡아 home에서 굽는다: ${err.getMessage()}"
-              node('laurio-staging') { buildImage('home') }
+              node('built-in') { buildImage('home') }
             }
           }
         }
