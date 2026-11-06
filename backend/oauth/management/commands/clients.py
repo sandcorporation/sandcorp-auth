@@ -8,6 +8,7 @@ from services.confidential_clients import (
     create_confidential_client,
     rotate_client_secret,
 )
+from services.machine_clients import MachineClientError, create_machine_client
 from services.members import set_allows_members
 from services.webhooks import InvalidWebhookUrl, set_webhook
 
@@ -17,6 +18,7 @@ ACTOR = "manage.py clients"
 class Command(BaseCommand):
     help = (
         "OAuth 클라이언트 관리: create-confidential(사이트 관리 화면 로그인용 기밀 클라이언트), "
+        "create-machine(client_credentials로 토큰을 받는 기계 클라이언트), "
         "rotate-secret, members(일반 사용자 허용 켜기·끄기), "
         "webhook(user.deleted 웹훅 주소·서명 비밀), list. "
         "시크릿 원문은 발급할 때 한 번만 출력한다."
@@ -38,8 +40,24 @@ class Command(BaseCommand):
             action="store_true",
             help="일반 사용자(소셜 로그인 계정)도 받는다. 기본은 대표만",
         )
+        machine = actions.add_parser(
+            "create-machine",
+            help="기계 클라이언트를 만든다(사람 없이 client_credentials로 토큰을 받는다)",
+        )
+        machine.add_argument("--name", required=True)
+        machine.add_argument(
+            "--resource", required=True, help="토큰의 aud가 될 등록된 리소스 URL 하나"
+        )
+        machine.add_argument(
+            "--scope",
+            dest="scopes",
+            action="append",
+            required=True,
+            help="그 리소스의 스코프 이름. 여러 번 주거나 공백으로 나눠 줄 수 있다",
+        )
         rotate = actions.add_parser(
-            "rotate-secret", help="시크릿을 새로 발급한다(옛 것은 즉시 무효)"
+            "rotate-secret",
+            help="기밀·기계 클라이언트의 시크릿을 새로 발급한다(옛 것은 즉시 무효)",
         )
         rotate.add_argument("--client-id", required=True)
         members = actions.add_parser(
@@ -77,13 +95,31 @@ class Command(BaseCommand):
             if options["allow_members"]:
                 set_allows_members(issued.client, True, actor=ACTOR)
             self._print_secret("기밀 클라이언트를 만들었습니다.", issued.client, issued.secret)
+        elif action == "create-machine":
+            scopes = options["scopes"]
+            assert isinstance(scopes, list)
+            try:
+                issued = create_machine_client(
+                    str(options["name"]),
+                    str(options["resource"]),
+                    [name for value in scopes for name in str(value).split()],
+                    actor=ACTOR,
+                )
+            except MachineClientError as error:
+                raise CommandError(str(error), returncode=1) from None
+            self._print_secret("기계 클라이언트를 만들었습니다.", issued.client, issued.secret)
         elif action == "rotate-secret":
             client_id = str(options["client_id"])
-            client = Client.objects.filter(
-                client_id=client_id, kind=Client.Kind.CONFIDENTIAL
-            ).first()
+            client = (
+                Client.objects.filter(
+                    client_id=client_id,
+                    kind__in=[Client.Kind.CONFIDENTIAL, Client.Kind.MACHINE],
+                ).first()
+                if client_id.isascii()
+                else None
+            )
             if client is None:
-                raise CommandError(f"기밀 클라이언트가 없습니다: {client_id}", returncode=1)
+                raise CommandError(f"기밀·기계 클라이언트가 없습니다: {client_id}", returncode=1)
             secret = rotate_client_secret(client, actor=ACTOR)
             self._print_secret(
                 "시크릿을 새로 발급했습니다. 옛 시크릿은 이제 통하지 않습니다.", client, secret
@@ -102,10 +138,15 @@ class Command(BaseCommand):
         elif action == "webhook":
             self._webhook(options)
         else:
-            for client in Client.objects.order_by("created_at"):
+            for client in Client.objects.select_related("machine_resource").order_by("created_at"):
                 state = "active" if client.active else "inactive"
                 members = "members=on" if client.allows_members else "members=off"
                 uris = " ".join(client.redirect_uris)
+                if client.kind == Client.Kind.MACHINE and client.machine_resource is not None:
+                    uris = (
+                        f"resource={client.machine_resource.url} "
+                        f"scope={' '.join(client.machine_scopes)}"
+                    )
                 self.stdout.write(
                     f"{client.client_id}\t{client.kind}\t{client.registered_via}\t{state}\t"
                     f"{client.name}\t{uris}\t{members}\twebhook={client.webhook_url or 'off'}"
@@ -142,12 +183,22 @@ class Command(BaseCommand):
             )
 
     def _print_secret(self, headline: str, client: Client, secret: str) -> None:
+        if client.kind == Client.Kind.MACHINE and client.machine_resource is not None:
+            bound = (
+                f"resource: {client.machine_resource.url}\n"
+                f"scope: {' '.join(client.machine_scopes)}\n"
+                "grant_type: client_credentials (client_secret_basic 또는 client_secret_post)\n"
+            )
+        else:
+            bound = (
+                f"redirect_uris: {' '.join(client.redirect_uris)}\n"
+                f"allows_members: {'on' if client.allows_members else 'off'}\n"
+            )
         self.stdout.write(
             f"{headline}\n"
             f"name: {client.name}\n"
             f"client_id: {client.client_id}\n"
             f"client_secret: {secret}\n"
-            f"redirect_uris: {' '.join(client.redirect_uris)}\n"
-            f"allows_members: {'on' if client.allows_members else 'off'}\n"
+            f"{bound}"
             "시크릿은 지금 한 번만 보입니다(저장된 것은 해시뿐). 사이트 설정에 바로 넣으세요."
         )

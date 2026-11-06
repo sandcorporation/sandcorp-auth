@@ -128,6 +128,11 @@ class ClientChangeForm(_ClientForm):
         model = Client
         fields = "__all__"
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401  # ModelForm's
+        super().__init__(*args, **kwargs)
+        if self.instance.kind == Client.Kind.MACHINE and "redirect_uris" in self.fields:
+            self.fields["redirect_uris"].required = False
+
     def clean_webhook_url(self) -> str:
         url = str(self.cleaned_data.get("webhook_url") or "").strip()
         if url and not url.startswith("https://"):
@@ -136,6 +141,11 @@ class ClientChangeForm(_ClientForm):
 
     def clean_redirect_uris(self) -> list[str]:
         uris: object = self.cleaned_data["redirect_uris"]
+        if self.instance.kind == Client.Kind.MACHINE:
+            # A machine client (#76) never redirects anyone.
+            if uris:
+                raise forms.ValidationError("기계 클라이언트에는 리다이렉트 URI가 없습니다")
+            return []
         if not isinstance(uris, list) or not uris:
             raise forms.ValidationError("리다이렉트 URI 목록이 하나 이상 있어야 합니다")
         checked: list[str] = []
@@ -185,6 +195,8 @@ class ClientAdmin(_ClientAdmin):
         "registered_via",
         "created_at",
         "secret_hash",
+        "machine_resource",
+        "machine_scopes",
         "metadata_fetched_at",
         "metadata_expires_at",
         "metadata_document",

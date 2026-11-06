@@ -62,7 +62,7 @@ def test_metadata_declares_endpoints_features_and_cimd(client: Client) -> None:
             "email",
             "email_verified",
         ],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "grant_types_supported": ["authorization_code", "refresh_token", "client_credentials"],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": [
             "none",

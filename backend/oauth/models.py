@@ -10,7 +10,11 @@ from django.db import models
 from django.db.models import Case, Q, Value, When
 
 from adapters.clock import get_clock
-from services.redirect_uris import ALLOWED_GRANT_TYPES, redirect_uri_matches
+from services.redirect_uris import (
+    ALLOWED_GRANT_TYPES,
+    CLIENT_CREDENTIALS,
+    redirect_uri_matches,
+)
 
 
 def _live_marker(condition: Q) -> models.GeneratedField:
@@ -110,6 +114,7 @@ class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no
     class Kind(models.TextChoices):
         PUBLIC = "public", "공개"
         CONFIDENTIAL = "confidential", "기밀"
+        MACHINE = "machine", "기계"
 
     class Via(models.TextChoices):
         CIMD = "cimd", "CIMD"
@@ -146,6 +151,16 @@ class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no
         "비우면 보내지 않는다.",
     )
     webhook_secret_encrypted = models.BinaryField(null=True, blank=True, editable=False)
+    # Machine clients (#76): the one resource (`aud`) and the scope names of it that a
+    # client_credentials token carries. Set by `manage.py clients create-machine` only.
+    machine_resource = models.ForeignKey(
+        Resource,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="machine_clients",
+    )
+    machine_scopes = models.JSONField(default=list, blank=True)
     # CIMD cache: when the document was fetched, until when it may be used without refetching,
     # and the document itself. Empty for DCR/admin clients.
     metadata_fetched_at = models.DateTimeField(null=True, blank=True)
@@ -189,9 +204,13 @@ class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no
         return method in ("client_secret_basic", "client_secret_post")
 
     def check_response_type(self, response_type: str) -> bool:
-        return response_type == "code"
+        # A machine client acts for itself: it never sends anyone to /authorize.
+        return response_type == "code" and self.kind != self.Kind.MACHINE
 
     def check_grant_type(self, grant_type: str) -> bool:
+        """client_credentials for machine clients only, and nothing else for them (#76)."""
+        if self.kind == self.Kind.MACHINE:
+            return grant_type == CLIENT_CREDENTIALS
         return grant_type in ALLOWED_GRANT_TYPES
 
 
