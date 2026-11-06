@@ -64,6 +64,8 @@ OIDC 로그인 정보 스코프(`openid`·`profile`·`email`)는 리소스 스�
 
 일반 사용자(ADR 0003)의 토큰에는 위 클레임에 더해 `"acct": "member"`가 있고 `sub`는 `m_` + ULID다. **대표 토큰에는 `acct`가 없다.** 이 절의 규칙(T11)은 그대로이고, 일반 사용자를 받는 사이트만 10절을 따른다.
 
+기계 클라이언트(#76, ADR 0006)의 토큰에는 `"acct": "machine"`이 있고 `sub`는 `client:<client_id>`다. T11·A2가 이 토큰을 거르므로 대표·일반 사용자만 받는 사이트는 할 일이 없다. 기계 토큰을 받을 자리만 12절을 따른다.
+
 ## 3. 검증 규칙
 
 순서대로 적용한다. 하나라도 어기면 거부한다. T1~T11 위반은 **401 `invalid_token`**, S1 위반만 **403 `insufficient_scope`** 이다.
@@ -477,3 +479,55 @@ def verify_sandcorp_webhook(
 
 이 예시는 `backend/tests/test_withdrawal.py`가 이 문서에서 그대로 꺼내 auth가 보낸 실제 요청으로 시험한다(문서와 구현이 어긋나면 시험이 깨진다).
 
+## 12. 기계 클라이언트 토큰(#76, ADR 0006)
+
+사람 없이 서비스가 서비스를 부르는 자리(예: promptlab의 Windows 끝에서 끝 스모크)는 **기계 클라이언트**를 쓴다. 기계 클라이언트는 조율자가 관리 명령으로만 만들고, 리소스 하나와 그 리소스의 스코프 몇 개에 묶인다. 대표·일반 사용자를 받는 자리는 이 절을 보지 않는다 — 기계 토큰은 `sub`가 `AUTH_OWNER_SUB`가 아니어서 T11에, `acct`가 `"member"`가 아니어서 A2에 걸린다.
+
+### 만들기와 토큰 받기
+
+```sh
+# 조율자(운영): client_id·client_secret이 한 번만 출력된다(DB에는 해시만)
+docker exec -it sandcorp-auth-web-1 python manage.py clients create-machine \
+  --name "promptlab 스모크" --resource https://promptlab.sandcorp.co.kr/api --scope "<스코프> [<스코프> …]"
+# 재발급(옛 것은 즉시 무효): clients rotate-secret --client-id <id>   목록: clients list
+```
+
+```http
+POST /token HTTP/1.1
+Host: auth.sandcorp.co.kr
+Authorization: Basic base64(<client_id>:<client_secret>)
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials
+```
+
+- 인증은 `client_secret_basic` 또는 `client_secret_post`(본문에 `client_id`·`client_secret`).
+- `scope`를 빼면 묶인 스코프 전부, 주면 그 부분집합만. 묶이지 않은 스코프가 하나라도 있으면 400 `invalid_scope`.
+- `resource`는 빼도 되고, 주면 묶인 리소스 URL과 정확히 같아야 한다(다르거나 둘 이상이면 400 `invalid_target`).
+- 시크릿이 틀리면 401 `invalid_client`. 기계 클라이언트가 아닌 클라이언트(기밀)는 400 `unauthorized_client`, 공개·동적·CIMD 클라이언트는 시크릿이 없어 401 `invalid_client`. 기계 클라이언트는 다른 그랜트(`authorization_code`·`refresh_token`)와 `/authorize`를 쓰지 못한다.
+- 응답: `access_token`·`token_type=Bearer`·`expires_in=600`·`scope`. **refresh token은 없다** — 10분이 지나면 같은 요청으로 다시 받는다.
+
+### 클레임
+
+2절 표의 클레임에 더해:
+
+| 클레임 | 값 |
+|---|---|
+| `acct` | `"machine"` (문자열) |
+| `sub` | `"client:"` + `client_id`, 예 `"client:Zf3k..."` |
+| `aud` | 그 클라이언트에 묶인 리소스 URL |
+| `scope` | 요청한(또는 묶인 전부의) 스코프, 이름순 공백 구분 |
+
+서명·`kid`·JWKS·수명은 다른 토큰과 같다.
+
+### 검증 규칙
+
+T1~T10은 3절 그대로, **T11 대신 M1~M3**, 그다음 S1.
+
+- **M1.** `acct`가 문자열 `"machine"`과 정확히 같지 않으면 거부(없음, `"member"`, 대소문자 차이 모두 거부).
+- **M2.** `sub`가 `"client:"` + `client_id` 클레임과 정확히 같지 않으면 거부.
+- **M3.** `client_id`가 그 사이트가 받기로 정한 기계 클라이언트 목록(설정값, 예 `AUTH_MACHINE_CLIENT_IDS`)에 없으면 거부.
+
+M1~M3 위반은 401 `invalid_token`. 기계 토큰으로 무엇을 할 수 있는지(예: promptlab은 시험 전용 조직에서만 제출)는 사이트가 `client_id`로 정한다 — auth는 「이 클라이언트에 이 리소스·스코프를 서명해 줄 수 있다」까지만 보장한다. 기계 토큰은 대표 전용 기능(관리 화면 등)을 열지 않는다.
+
+참조 구현은 `backend/tests/reference_validator.py`의 `validate_machine_access_token`, 시험은 `backend/tests/test_machine_clients.py`. 공용 패키지 `sandcorp-authkit`에는 아직 기계 토큰 검증 함수가 없다(기존 함수는 기계 토큰을 거부한다) — 처음 쓰는 사이트의 티켓에서 더한다.

@@ -201,7 +201,7 @@ def test_cimd_client_can_exchange(owner_client: Client, cimd_client: OAuthClient
     assert set(tokens) == TOKEN_FIELDS
 
 
-@pytest.mark.parametrize("grant_type", ["password", "client_credentials"])
+@pytest.mark.parametrize("grant_type", ["password"])  # client_credentials: test_machine_clients
 def test_other_grant_types_are_unsupported(
     owner_client: Client, dcr_client: OAuthClient, grant_type: str
 ) -> None:

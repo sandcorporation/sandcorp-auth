@@ -28,6 +28,7 @@ from oauth.models import (
     Resource,
 )
 from services import audit
+from services.machine_clients import MACHINE, machine_sub
 from services.members import (
     MEMBER,
     MemberClientRefused,
@@ -92,7 +93,10 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
         nonce: str | None = None,
     ) -> TokenResponse:
         """`auth_time` (the owner's login) and `nonce` go into the ID token, which is made
-        only when the scope has `openid`."""
+        only when the scope has `openid`. A machine client (#76) gets a token for itself:
+        no account, `sub` = `client:<client_id>`, `acct` = `machine`, never a refresh token."""
+        if client.kind == Client.Kind.MACHINE:
+            return self._machine_token(client, scope, resource, user)
         if not isinstance(user, User) or resource is None:
             raise RuntimeError("an access token needs an account and a resource (its audience)")
         allowed: str = self.get_allowed_scope(client, scope)
@@ -135,6 +139,28 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
                 nonce=nonce,
             )
         return token
+
+    @staticmethod
+    def _machine_token(
+        client: Client, scope: str | None, resource: Resource | None, user: object
+    ) -> TokenResponse:
+        if user is not None or resource is None or resource != client.machine_resource:
+            raise RuntimeError("a machine token has no account and only the client's resource")
+        scopes = sorted(set((scope or "").split()))
+        if not scopes or not set(scopes) <= set(client.machine_scopes):
+            raise RuntimeError("a machine token carries only the client's bound scopes")
+        return TokenResponse(
+            access_token=issue_access_token(
+                sub=machine_sub(client),
+                audience=resource.url,
+                client_id=client.client_id,
+                scopes=scopes,
+                acct=MACHINE,
+            ),
+            token_type="Bearer",
+            expires_in=int(settings.ACCESS_TOKEN_LIFETIME.total_seconds()),
+            scope=" ".join(scopes),
+        )
 
 
 def live_family(consent: Consent) -> RefreshTokenFamily:

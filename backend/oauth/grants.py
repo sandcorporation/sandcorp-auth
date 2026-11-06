@@ -18,6 +18,10 @@ back revokes the refresh token family its consent opened (`oauth.tokens.report_c
 the same family and marks the old one `replaced_by` it. A replaced or revoked refresh token that
 comes back is reuse: the whole family is revoked. The family's resource is the only possible
 `aud`, and a narrower `scope` may be asked for, never a wider one.
+
+`SandcorpClientCredentialsGrant` (#76) is for machine clients only (`services.machine_clients`):
+the token's `aud` and scopes are the ones bound to the client, there is no user and no refresh
+token. Any other client is refused with `unauthorized_client` after it authenticates.
 """
 
 import hashlib
@@ -29,7 +33,11 @@ from authlib.oauth2.rfc6749 import (
     InvalidRequestError,
     InvalidScopeError,
 )
-from authlib.oauth2.rfc6749.grants import AuthorizationCodeGrant, RefreshTokenGrant
+from authlib.oauth2.rfc6749.grants import (
+    AuthorizationCodeGrant,
+    ClientCredentialsGrant,
+    RefreshTokenGrant,
+)
 from authlib.oauth2.rfc7636 import CodeChallenge
 from django.contrib.auth.models import User
 from django.db import transaction
@@ -39,11 +47,13 @@ from core.http import client_ip
 from oauth.models import AuthorizationCode, Client, Consent, RefreshToken, Resource
 from oauth.tokens import (
     TokenResponse,
+    access_token_jti,
     find_refresh_token,
     report_code_reuse,
     revoke_family,
 )
 from services import audit
+from services.machine_clients import ResourceRefused, ScopeRefused, machine_grant, machine_sub
 from services.members import (
     MemberClientRefused,
     MemberInactive,
@@ -385,3 +395,51 @@ class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no 
         if self.issued is None:
             raise RuntimeError("a rotated refresh token needs its replacement")
         RefreshToken.objects.filter(pk=refresh_token.pk).update(replaced_by=self.issued)
+
+
+class SandcorpClientCredentialsGrant(ClientCredentialsGrant):  # type: ignore[misc]  # no stubs
+    """RFC 6749 4.4 for machine clients (#76). authlib authenticates the client (basic or post)
+    and asks `check_grant_type`, which only a machine client passes; then the requested
+    `resource`/`scope` must be the client's own (`machine_grant`)."""
+
+    TOKEN_ENDPOINT_AUTH_METHODS = ["client_secret_basic", "client_secret_post"]
+
+    def validate_token_request(self) -> None:
+        super().validate_token_request()
+        client: Client = self.request.client
+        try:
+            self.request.machine_grant = machine_grant(
+                client,
+                self.request.payload.datalist.get("resource", []),
+                self.request.payload.scope,
+            )
+        except ResourceRefused as refused:
+            raise InvalidTargetError(str(refused)) from None
+        except ScopeRefused as refused:
+            raise InvalidScopeError(str(refused)) from None
+
+    def create_token_response(self) -> tuple[int, TokenResponse, Headers]:
+        client: Client = self.request.client
+        resource, scopes = self.request.machine_grant
+        token = self.server.generate_token(
+            self.GRANT_TYPE,
+            client,
+            scope=" ".join(scopes),
+            include_refresh_token=False,
+            resource=resource,
+        )
+        # Nothing is stored (no refresh token); the server's save_token is for code/refresh.
+        audit.record(
+            audit.TOKEN_ISSUED,
+            actor=machine_sub(client),
+            client_id=client.client_id,
+            ip=request_ip(self.request),
+            detail={
+                "client_id": client.client_id,
+                "grant_type": self.GRANT_TYPE,
+                "resource": resource.url,
+                "scope": token["scope"],
+                "jti": access_token_jti(token["access_token"]),
+            },
+        )
+        return 200, token, self.TOKEN_RESPONSE_HEADER

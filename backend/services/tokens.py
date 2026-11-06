@@ -18,8 +18,8 @@ def issue_access_token(
     acct: str | None = None,
 ) -> str:
     """Sign an access token with the active key. Raises NoActiveSigningKey if there is none.
-    `acct` (the account kind claim, ADR 0003) is given for members only: the owner's tokens
-    keep exactly the claims of §2."""
+    `acct` (the account kind claim, ADR 0003) is given for members and machine clients (#76)
+    only: the owner's tokens keep exactly the claims of §2."""
     key = active_signing_key()
     iat = int(get_clock().now().timestamp())
     claims: dict[str, str | int] = {

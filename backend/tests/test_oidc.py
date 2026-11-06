@@ -120,7 +120,11 @@ def test_discovery_and_rfc8414_metadata_are_the_same_document(client: Client) ->
         body["scopes_supported"]
     )
     assert "client_secret_basic" in body["token_endpoint_auth_methods_supported"]
-    assert set(body["grant_types_supported"]) == {"authorization_code", "refresh_token"}
+    assert set(body["grant_types_supported"]) == {
+        "authorization_code",
+        "refresh_token",
+        "client_credentials",
+    }
 
 
 # --- authorize → token ---------------------------------------------------------------------

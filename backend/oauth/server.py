@@ -30,6 +30,7 @@ from adapters.clock import get_clock
 from oauth.grants import (
     S256CodeChallenge,
     SandcorpAuthorizationCodeGrant,
+    SandcorpClientCredentialsGrant,
     SandcorpRefreshTokenGrant,
     request_ip,
 )
@@ -46,7 +47,7 @@ from oauth.tokens import (
 from services import audit
 from services.clients import find_client
 from services.oidc import CLAIMS_SUPPORTED
-from services.redirect_uris import ALLOWED_GRANT_TYPES, valid_redirect_uri
+from services.redirect_uris import ALLOWED_GRANT_TYPES, CLIENT_CREDENTIALS, valid_redirect_uri
 from services.signing import ALGORITHM, random_token
 
 type JSON = str | int | float | bool | None | list[JSON] | dict[str, JSON]
@@ -90,7 +91,7 @@ def authorization_server_metadata() -> dict[str, JSON]:
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": [ALGORITHM],
         "claims_supported": list(CLAIMS_SUPPORTED),
-        "grant_types_supported": list(ALLOWED_GRANT_TYPES),
+        "grant_types_supported": [*ALLOWED_GRANT_TYPES, CLIENT_CREDENTIALS],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": list(CLIENT_AUTH_METHODS),
         "revocation_endpoint_auth_methods_supported": list(CLIENT_AUTH_METHODS),
@@ -272,4 +273,5 @@ server = SandcorpAuthorizationServer(Client, None)  # no token model: see save_t
 server.register_endpoint(DynamicClientRegistration)
 server.register_grant(SandcorpAuthorizationCodeGrant, [S256CodeChallenge(required=True)])
 server.register_grant(SandcorpRefreshTokenGrant)
+server.register_grant(SandcorpClientCredentialsGrant)  # machine clients only (#76)
 server.register_endpoint(SandcorpRevocationEndpoint)

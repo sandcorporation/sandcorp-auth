@@ -82,9 +82,10 @@ def create_confidential_client(
 
 @transaction.atomic
 def rotate_client_secret(client: Client, *, actor: str, ip: str = "") -> str:
-    """Issue a new secret for a confidential client; the old one stops working at once."""
-    if client.kind != Client.Kind.CONFIDENTIAL:
-        raise NotConfidential(f"기밀 클라이언트가 아닙니다: {client.client_id}")
+    """Issue a new secret for a confidential or machine (#76) client; the old one stops
+    working at once."""
+    if client.kind not in (Client.Kind.CONFIDENTIAL, Client.Kind.MACHINE):
+        raise NotConfidential(f"시크릿이 있는 클라이언트가 아닙니다: {client.client_id}")
     secret = random_token(SECRET_BYTES)
     client.secret_hash = make_password(secret)
     client.save(update_fields=["secret_hash"])

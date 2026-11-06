@@ -128,8 +128,9 @@ compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운�
 | 서명 키 목록 | `manage signing_keys list` | `kid`·상태(active/retired)·만든 시각·은퇴 시각 |
 | 비밀번호 초기화 | `docker exec -it sandcorp-auth-web-1 python manage.py owner set-password` | 프롬프트로 새 비밀번호 |
 | TOTP 초기화(폰 분실) | `manage owner reset-totp` | 장치를 지운다. 다음 로그인에서 다시 등록한다 |
-| 클라이언트 시크릿 재발급 | `manage clients rotate-secret --client-id <id>` 또는 admin 클라이언트 변경 화면 「시크릿 재발급」 | 옛 시크릿은 **즉시** 무효. 새 시크릿을 사이트 `.env`에 넣고 사이트를 다시 배포할 때까지 그 사이트 관리 화면 로그인이 실패한다 |
-| 클라이언트 목록 | `manage clients list` | `client_id  kind  registered_via  active|inactive  name  redirect_uris  members=on|off` |
+| 클라이언트 시크릿 재발급 | `manage clients rotate-secret --client-id <id>`(기밀·기계) 또는 admin 클라이언트 변경 화면 「시크릿 재발급」 | 옛 시크릿은 **즉시** 무효. 새 시크릿을 사이트 `.env`에 넣고 사이트를 다시 배포할 때까지 그 사이트 관리 화면 로그인이 실패한다 |
+| 기계 클라이언트 만들기(#76) | `manage clients create-machine --name <이름> --resource <리소스 URL> --scope "<스코프> [<스코프> …]"` (`--scope`는 여러 번 줘도 된다) | 사람 없이 `grant_type=client_credentials`로 토큰을 받는 서비스용(예: promptlab 스모크, 리소스 `https://promptlab.sandcorp.co.kr/api`). 리소스는 등록된 것, 스코프는 그 리소스의 것만(아니면 종료 코드 1). `client_id`·`client_secret`은 **한 번만** 출력(DB엔 해시). 토큰은 10분, refresh 없음, `sub=client:<client_id>`·`acct=machine`(`docs/resource-server-token-validation.md` 12절). 감사 `client.created`(kind=machine), 발급마다 `token.issued`. 재발급은 위 `rotate-secret`, 끄기는 admin 「비활성」 |
+| 클라이언트 목록 | `manage clients list` | `client_id  kind  registered_via  active|inactive  name  redirect_uris  members=on|off` (기계 클라이언트는 redirect_uris 자리에 `resource=<URL> scope=<스코프…>`) |
 | 일반 사용자 허용 켜기·끄기 | `manage clients members --client-id <id> --allow` / `--deny`, 만들 때 `create-confidential … --allow-members`, 또는 admin 클라이언트 변경 화면 「일반 사용자 허용」 | 기본 꺼짐. 켜진 클라이언트만 일반 사용자(소셜 로그인 계정)에게 코드·토큰을 준다(ADR 0003). 감사 `client.members_changed`. 대표만 받는 기존 사이트(portfolio, 뉴스, metrics, oauth2-proxy)는 켜지 않는다 |
 | 스코프의 일반 사용자 허용 켜기·끄기(#47) | `manage scopes members --resource <url> --name <scope> --allow` / `--deny`, 또는 admin 리소스 변경 화면의 스코프 줄 「일반 사용자 허용」 | 기본 꺼짐. 켜진 스코프는 그 리소스를 요청한 일반 사용자도 받는다(리소스 기준 — 다른 리소스의 같은 이름은 상관없다). `admin`·`editor`는 켤 수 없다(종료 코드 1). 감사 `scope.members_changed`. Flow MCP: `manage scopes members --resource https://flow.sandcorp.co.kr/mcp --name flow.read --allow`, 같은 식으로 `--name flow.write` |
 | 스코프 목록 | `manage scopes list [--resource <url>]` | `리소스 URL  스코프  members=on|off`(탭 구분) |

@@ -4,7 +4,8 @@ that take Sandcorp members).
 This file implements docs/resource-server-token-validation.md rule for rule, with plain PyJWT
 and no Django, so the sites can copy it. When the rules change, change both together.
 `validate_access_token` is the owner-only rule set (T11, §3); `validate_account_access_token`
-is the rule set for sites that take members (A1-A3 instead of T11, §10).
+is the rule set for sites that take members (A1-A3 instead of T11, §10);
+`validate_machine_access_token` is for endpoints that take machine clients (M1-M3, §12).
 
 Injected: `fetch_jwks` (GET https://auth.sandcorp.co.kr/.well-known/jwks.json, parsed JSON)
 and `clock` (anything with `now() -> aware datetime`).
@@ -28,6 +29,7 @@ EXP_LEEWAY_SECONDS = 30
 REQUIRED_CLAIMS = ["iss", "sub", "aud", "exp", "iat", "jti", "client_id", "scope"]
 ACCOUNT_KIND_CLAIM = "acct"
 MEMBER_SUB = re.compile(r"m_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+MACHINE_SUB_PREFIX = "client:"
 
 
 class Clock(Protocol):
@@ -67,7 +69,7 @@ class AccessToken:
     jti: str
     iat: int
     exp: int
-    acct: Literal["owner", "member"] = "owner"
+    acct: Literal["owner", "member", "machine"] = "owner"
 
 
 class JwksCache:
@@ -166,6 +168,36 @@ def validate_account_access_token(
         acct="member",
     )
     return _with_scope(member, required_scope)
+
+
+def validate_machine_access_token(
+    token: str,
+    *,
+    jwks: JwksCache,
+    audience: str,
+    machine_client_ids: frozenset[str],
+    required_scope: str,
+    clock: Clock,
+) -> AccessToken:
+    """For an endpoint that takes machine clients (§12): T1-T10, then M1-M3 in place of T11,
+    then S1. Never an owner's or a member's token."""
+    verified, claims = _verify_with_claims(token, jwks=jwks, audience=audience, clock=clock)
+    if claims.get(ACCOUNT_KIND_CLAIM) != "machine":  # M1
+        raise TokenRejected("not a machine token")
+    if verified.sub != MACHINE_SUB_PREFIX + verified.client_id:  # M2
+        raise TokenRejected("machine sub does not name its client")
+    if verified.client_id not in machine_client_ids:  # M3
+        raise TokenRejected("unknown machine client")
+    machine = AccessToken(
+        sub=verified.sub,
+        client_id=verified.client_id,
+        scopes=verified.scopes,
+        jti=verified.jti,
+        iat=verified.iat,
+        exp=verified.exp,
+        acct="machine",
+    )
+    return _with_scope(machine, required_scope)
 
 
 def _with_scope(verified: AccessToken, required_scope: str) -> AccessToken:

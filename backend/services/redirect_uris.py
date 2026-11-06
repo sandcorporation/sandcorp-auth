@@ -4,6 +4,8 @@ from typing import Final
 from urllib.parse import SplitResult, urlsplit
 
 ALLOWED_GRANT_TYPES: Final = ("authorization_code", "refresh_token")
+# Machine clients only (#76); never offered to DCR/CIMD clients.
+CLIENT_CREDENTIALS: Final = "client_credentials"
 # `urlsplit().hostname` strips the brackets of an IPv6 literal: `[::1]` comes back as `::1`.
 LOOPBACK_HOSTS: Final = frozenset({"localhost", "127.0.0.1", "::1"})
 
