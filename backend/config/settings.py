@@ -185,3 +185,9 @@ LOGGING = {
     "handlers": {"console": {"class": "logging.StreamHandler"}},
     "root": {"handlers": ["console"], "level": env("DJANGO_LOG_LEVEL", "INFO")},
 }
+
+# Errors go to our GlitchTip (project auth-backend) only when SENTRY_DSN is set (production).
+# Scrubbing and noise rules: core/observability.py; env: docs/operations.md section 12.
+from core.observability import configure_sentry  # noqa: E402
+
+configure_sentry()

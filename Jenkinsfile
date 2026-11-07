@@ -100,6 +100,8 @@ pipeline {
             sh "git checkout -q --detach ${sha}"
           }
           env.AUTH_IMAGE = "${IMAGE_REPO}:${sha}"
+          // GlitchTip release = 이 이미지의 커밋 sha(40자). compose가 컨테이너 SENTRY_RELEASE로 넘긴다(#78).
+          env.SENTRY_RELEASE = sha
           currentBuild.description = "${sha.take(12)} · " + (params.ROLLBACK_SHA?.trim() ? '되돌리기' : "빌드 ${env.BUILT_ON}") + ' · oracle pull'
           echo "== oracle은 굽지 않는다: ${env.AUTH_IMAGE} 를 pull"
           sh 'COMPOSE_PROJECT_NAME=sandcorp-auth COMPOSE_FILE=docker-compose.prod.yml:docker-compose.oracle.yml bash deploy/deploy.sh'

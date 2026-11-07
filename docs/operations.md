@@ -420,3 +420,14 @@ docker exec -it sandcorp-auth-web-1 python manage.py terms list   # 두 줄 모�
 | 끝난 웹훅 전송 | 만든 지 30일 뒤 `members purge` |
 | 요청 제한 카운터(IP) | 하루 넘게 쉬면 `members purge` |
 
+## 12. 오류 수집(GlitchTip, #78)
+
+운영 오류(5xx·처리되지 않은 예외)는 자체 GlitchTip(https://glitchtip.honeycombpizza.link, 프로젝트 `auth-backend`)으로 간다. 코드는 `backend/core/observability.py`.
+
+- **DSN**: 운영 `.env`의 `SENTRY_DSN_BACKEND=` 줄(값은 work의 `~/.cache/sandcorp-briefs/glitchtip-dsn/auth.env`의 `GLITCHTIP_DSN_BACKEND`). compose가 컨테이너 env `SENTRY_DSN`으로 넘긴다. 비어 있으면 SDK가 꺼진다(dev·시험·`make prod-local`은 비운다). 운영 `.env` 쓰기는 대장 몫이다. 값을 화면·로그·이슈에 적지 않는다.
+- **release**: Jenkins 배포가 이미지 태그의 커밋 sha(40자)를 `SENTRY_RELEASE`로 넘긴다(`Jenkinsfile`, compose `SENTRY_RELEASE: ${SENTRY_RELEASE:-}`). 되돌리기(`ROLLBACK_SHA`)면 그 sha다.
+- **environment**: 늘 `production`.
+- **보내지 않는 것**: 요청 본문, 쿠키, `Authorization`·`Cookie`·`X-CSRFToken`·`X-Forwarded-For` 헤더, 프레임 지역 변수, 사용자 정보(id 말고), 쿼리 값(`response_type`·`client_id`·`scope`·`resource`·`grant_type`·`prompt` 말고 — `code`·`state`·`nonce`·`next`는 가린다). 예외·로그 메시지 속 JWT·`Bearer`/`Basic` 값·이메일·긴 토큰 모양은 `[Filtered]`가 된다.
+- **버리는 것**: 404·403·`SuspiciousOperation`(`DisallowedHost` 포함)·4xx 상태 예외, `django.security.*` 로그, `manage.py shell`에서 손으로 친 명령의 예외.
+- **연동 확인**: 배포 뒤 `docker exec sandcorp-auth-web-1 python manage.py glitchtip_test` → `GlitchTipOnboardingTest("연동 시험 auth <날짜>")` 한 건과 이벤트 id를 찍는다. DSN이 없으면 종료 코드 1. GlitchTip에서 release가 배포 sha, 환경이 `production`인지 본다. 확인 뒤 그 이슈는 해결로 표시한다.
+- **진단 자동화**: work의 Orca 자동화 「GlitchTip prod 오류 진단 — auth」가 1분마다 `~/workspace/ops-shared/glitchtip/pick.py --service auth --projects auth-backend`로 미해결 production 오류를 하나 집어 진단만 해 대장 메일함에 `[운영] auth …`로 보낸다(고치지 않는다).
