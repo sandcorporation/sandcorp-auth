@@ -13,6 +13,10 @@ services:
     env_file: [.env]
     environment:
       DJANGO_DEBUG: "0"
+      # GlitchTip (#78): DSN from .env SENTRY_DSN_BACKEND (empty = SDK off), release = the image's
+      # commit sha that Jenkins exports. docs/operations.md section 12.
+      SENTRY_DSN: ${SENTRY_DSN_BACKEND:-}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-}
     ports:
       - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-18093}:8000"
     # Hits /api/health (which round-trips to the database) with the first allowed host as Host header.

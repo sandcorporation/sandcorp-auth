@@ -8,6 +8,9 @@ os.environ.setdefault("TRUST_X_FORWARDED_FOR", "0")
 os.environ.setdefault("SITE_URL", "https://auth.sandcorp.co.kr")
 # `make db` (docker-compose.yml): local MySQL on 15444.
 os.environ.setdefault("DB_PORT", "15444")
+# Never report to GlitchTip from tests
+# (tests/test_observability.py turns the SDK on with a fake transport).
+os.environ["SENTRY_DSN"] = ""
 # Social login providers on, answered by the autouse `fake_providers` fixture (never the real ones).
 os.environ.setdefault("GOOGLE_CLIENT_ID", "test-google-client.apps.googleusercontent.com")
 os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-google-secret")
