@@ -4,7 +4,7 @@ auth.sandcorp.co.kr(sandcorp-auth)를 배포하고 운영하는 사람(조율자
 
 ## 0. 구성 한눈에
 
-- oracle 호스트에서 Jenkins가 main 푸시마다 `deploy/deploy.sh`를 돈다(`Jenkinsfile`): 이미지는 oracle 밖(macos, 못 잡으면 home)에서 구워 ghcr에 올리고([`ops/offhost-build.md`](ops/offhost-build.md), 되돌리기 `ROLLBACK_SHA` 포함), oracle은 pull만 한다 → DB 접속 대기(`manage.py check --database default`, 2초 간격 30번) → `migrate` → web 교체 → 헬스 확인.
+- main 병합 → GitHub Actions `release.yml`이 검사·이미지 빌드(ghcr) 뒤 `production` 브랜치를 승격하고, oracle 호스트에서 Jenkins가 production push마다 `deploy/deploy.sh`를 돈다(`Jenkinsfile`, [`ops/offhost-build.md`](ops/offhost-build.md) — 되돌리기 포함). oracle은 pull만 한다 → DB 접속 대기(`manage.py check --database default`, 2초 간격 30번) → `migrate` → web 교체 → 헬스 확인.
 - compose 프로젝트 이름 `sandcorp-auth`, 파일 `docker-compose.prod.yml` + `docker-compose.oracle.yml`, 서비스 `web`(gunicorn, :8000) 하나. 컨테이너 이름은 `sandcorp-auth-web-1`.
 - DB는 compose 밖의 **OCI MySQL HeatWave**(MySQL 26.10, 같은 VCN의 사설 IP, 데이터베이스 `utf8mb4` / `utf8mb4_0900_as_cs`)다. web이 `.env`의 `DB_*`로 붙는다(ADR [0002](adr/0002-mysql-heatwave.md)). Postgres에서 옮길 때의 절차는 [`ops/db-migration.md`](ops/db-migration.md).
 - web은 docker 브리지 게이트웨이 `172.17.0.1:18093`에만 묶인다. 바깥은 NPMplus가 TLS를 끝내고 `https://auth.sandcorp.co.kr` → `http://172.17.0.1:18093`으로 넘긴다.
@@ -60,7 +60,7 @@ compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운�
 
 1. **`.env` 준비** — oracle 호스트에서 `.env.example`을 `/var/jenkins_home/workspace/sandcorp-auth/.env`로 복사해 1절대로 채운다(Jenkins 체크아웃은 추적하지 않는 파일을 지우지 않는다). `SIGNING_KEY_ENCRYPTION_KEY`와 `.env` 전체는 바로 5절의 백업 자리에도 둔다.
 2. **NPMplus 프록시 호스트** — 4절대로 만든다(Let's Encrypt).
-3. **배포** — main에 푸시하면 Jenkins가 `deploy/deploy.sh`를 돈다. 마이그레이션도 여기서 된다(자원·스코프 시드 포함: `https://sandcorp.co.kr/mcp`의 `admin`·`login`, `https://news.sandcorp.co.kr/mcp`의 `admin`·`editor`·`login`). 콘솔 끝에 `{"status": "ok", "db": "ok", …}`가 나오면 된 것이다.
+3. **배포** — main에 병합하면 Actions가 production을 승격하고 Jenkins가 `deploy/deploy.sh`를 돈다. 마이그레이션도 여기서 된다(자원·스코프 시드 포함: `https://sandcorp.co.kr/mcp`의 `admin`·`login`, `https://news.sandcorp.co.kr/mcp`의 `admin`·`editor`·`login`). 콘솔 끝에 `{"status": "ok", "db": "ok", …}`가 나오면 된 것이다.
 4. **서명 키 만들기**
 
    ```sh

@@ -1,17 +1,19 @@
 # PR 검사: 린트·타입·시험(백엔드 + sandcorp-authkit). GitHub 호스팅 실행기만 쓰고 비밀값은 쓰지 않는다.
-# 배포는 Jenkins(main push)가 맡는다. 보안 규칙: pull_request_target 금지, self-hosted 금지, 최소 권한.
+# main push에서는 release.yml이 이 워크플로를 workflow_call로 불러 같은 검사를 돌린다(#84) — 통과해야 이미지·승격으로 간다.
+# 그때 github.event_name은 부른 쪽의 push라 uv 캐시는 main에서만 저장된다.
+# 보안 규칙: pull_request_target 금지, self-hosted 금지, 최소 권한.
 name: pr-check
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pr-check-${{ github.ref }}
+  # PR은 번호마다 새 push가 옛 실행을 끊는다. main(workflow_call)은 커밋마다 따로 — 끊기면 그 sha의 승격 실행이 취소로 끝난다.
+  group: pr-check-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -48,3 +50,5 @@ jobs:
         run: make typecheck
       - name: 시험
         run: make test
+      - name: 승격 스크립트 시험
+        run: bash scripts/ci/promote_test.sh
