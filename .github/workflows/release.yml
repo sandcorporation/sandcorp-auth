@@ -1,9 +1,11 @@
-# main push → 검사 → 이미지 → production 승격(#84, 본보기 sandcorp-metrics #32). production 브랜치 머리 = 운영 버전.
+# main push → 검사 ∥ 이미지 → production 승격(#84, 본보기 sandcorp-metrics #32). production 브랜치 머리 = 운영 버전.
 # Jenkins `sandcorp-auth`는 production push만 보고, 굽지도 검사하지도 않고 그 sha의 이미지를 받아 oracle에 배포한다
 # (Jenkinsfile → jenkins-shared sandcorpDeploy deployFrom: 'production').
 #
-#   check   pr-check.yml(workflow_call) — PR과 같은 린트·타입·시험. 깨지면 이미지도 승격도 없다.
-#   image   needs check. image.yml(workflow_call) — 이미지마다 matrix 잡 하나, ghcr <이미지>:<sha>.
+#   check   pr-check.yml(workflow_call) — PR과 같은 린트·타입·시험. 깨지면 승격이 없다.
+#   image   check와 병렬. image.yml(workflow_call) — 이미지마다 matrix 잡 하나, ghcr <이미지>:<sha>.
+#           check가 깨지면 이미지만 GHCR에 남고 production은 움직이지 않는다(운영은 production sha만 받는다).
+#           그 sha를 ROLLBACK_SHA로 지정하지 않는다.
 #   promote needs check·image. production을 이 sha로 fast-forward만(scripts/ci/promote.sh ff).
 #           production이 이미 더 새 판이면(옛 실행이 늦게 끝남) 실패가 아니라 건너뜀.
 # production은 앞으로만 간다(ruleset: 강제 push·삭제 금지). 되돌리기는 main에 revert PR — 이 흐름을 그대로 탄다.
@@ -29,7 +31,6 @@ jobs:
       contents: read
 
   image:
-    needs: check
     uses: ./.github/workflows/image.yml
     permissions:
       contents: read
