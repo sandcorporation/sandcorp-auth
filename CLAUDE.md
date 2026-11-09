@@ -19,11 +19,11 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 ## 작업 흐름
 
 - 스펙은 #1, 티켓은 그 하위 이슈다. 이슈마다 워크트리 `~/workspace/sandcorp-auth-wt/<브랜치>`에서 작업하고 `origin/main`으로 PR을 연다.
-- PR CI는 없다. 시험·린트·타입 검사는 로컬에서 돌린다. 통과하면 작업자가 바로 squash 병합한다(main 직접 push 금지).
+- PR 검사는 GitHub Actions `pr-check`(린트·타입·시험). 초록이면 작업자가 바로 squash 병합한다(main 직접 push 금지).
 - 배포와 서버 설정(env 파일, NPMplus, DNS, OCI)은 조율자가 다룬다. 작업자는 원격 호스트에 쓰지 않는다.
 - 인가 서버 핵심(OAuth 프로토콜 처리)은 authlib다. `backend/oauth/server.py`의 `server`에 엔드포인트·그랜트를 등록하고, 손으로 짜는 것은 authlib에 없는 부분(CIMD, RFC 8707 `resource`, 동의 화면)뿐이다.
 - 스택과 명령은 `~/workspace/portfolio`와 같은 형태를 따른다: `backend/`(uv, Python 3.14, Django, django-ninja), `make test` / `make lint` / `make typecheck` / `make check`.
-- 배포 이미지(#68): Jenkins `sandcorp-auth`가 이미지를 macos(3분 안에 못 잡으면 home)에서 구워 `ghcr.io/sandcorporation/sandcorp-auth:<sha>`로 올리고(`scripts/ci/build-image.sh`, 파라미터 `BUILDER`·`MAC_WAIT_SECONDS`·`ROLLBACK_SHA`), oracle은 `AUTH_IMAGE`로 pull만 한다. 절차·되돌리기는 `docs/ops/offhost-build.md`.
+- 배포(#84): main push마다 GitHub Actions `release.yml`이 `check`(pr-check workflow_call) → `image`(image.yml, `ubuntu-24.04-arm`, `ghcr.io/sandcorporation/sandcorp-auth:<sha>`) → `promote`(`scripts/ci/promote.sh ff` — `production` 브랜치를 fast-forward만)를 돈다. production 머리 = 운영 버전. Jenkins `sandcorp-auth`는 production만 보고(jenkins-shared `sandcorpDeploy(deployFrom: 'production')`) 굽지 않고 oracle에서 `AUTH_IMAGE`로 pull만 한다(파라미터 `BUILD_ON=jenkins`는 비상 길 — macos/home에서 `scripts/ci/build-image.sh`로 굽기, `ROLLBACK_SHA`). 되돌리기는 main에 revert PR(급하면 `ROLLBACK_SHA`) — production은 강제 push 금지. 절차는 `docs/ops/offhost-build.md`.
 - 배포·운영(env 변수, 첫 배포, 관리 명령, 프록시, 백업)은 `docs/operations.md`. 운영 절차가 바뀌는 티켓은 그 문서도 함께 고친다.
 - 자원 서버(portfolio·metrics·news·flow)가 공용 패키지 `sandcorp-authkit`을 쓰는 법(의존성, 어댑터 한 파일, Docker SSH 빌드, 운영 확인, 버전 올리기)은 `docs/resource-servers.md`, 결정 배경은 `docs/adr/0005-resource-server-authkit.md`.
 - 두 사이트(portfolio, 뉴스)의 토큰 검증 규칙은 `docs/resource-server-token-validation.md`(참조 구현 `backend/tests/reference_validator.py`). 일반 사용자를 받는 사이트는 그 문서 10절.

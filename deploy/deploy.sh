@@ -16,6 +16,10 @@ fi
 
 compose() { docker compose "$@"; }
 
+# GlitchTip release = 이 이미지의 커밋 sha(#78). compose가 컨테이너 SENTRY_RELEASE로 넘긴다.
+# Jenkins(jenkins-shared sandcorpDeploy)는 SANDCORP_IMAGE_SHA로 준다(#84). 둘 다 없으면(make prod-local) 빈 값.
+export SENTRY_RELEASE="${SENTRY_RELEASE:-${SANDCORP_IMAGE_SHA:-}}"
+
 wait_healthy() {
   local svc=$1
   for i in $(seq 1 90); do
