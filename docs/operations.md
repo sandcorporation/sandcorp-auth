@@ -422,7 +422,7 @@ docker exec -it sandcorp-auth-web-1 python manage.py terms list   # 두 줄 모�
 
 ## 12. 오류 수집(GlitchTip, #78)
 
-운영 오류(5xx·처리되지 않은 예외)는 자체 GlitchTip(https://glitchtip.honeycombpizza.link, 프로젝트 `auth-backend`)으로 간다. 코드는 `backend/core/observability.py`.
+운영 오류(5xx·처리되지 않은 예외)는 자체 GlitchTip(주소는 DSN에 들어 있다 — `<glitchtip-host>`, 프로젝트 `auth-backend`)으로 간다. 코드는 `backend/core/observability.py`.
 
 - **DSN**: 운영 `.env`의 `SENTRY_DSN_BACKEND=` 줄(값은 work의 `~/.cache/sandcorp-briefs/glitchtip-dsn/auth.env`의 `GLITCHTIP_DSN_BACKEND`). compose가 컨테이너 env `SENTRY_DSN`으로 넘긴다. 비어 있으면 SDK가 꺼진다(dev·시험·`make prod-local`은 비운다). 운영 `.env` 쓰기는 대장 몫이다. 값을 화면·로그·이슈에 적지 않는다.
 - **release**: Jenkins 배포가 이미지 태그의 커밋 sha(40자)를 `SENTRY_RELEASE`로 넘긴다(`Jenkinsfile`, compose `SENTRY_RELEASE: ${SENTRY_RELEASE:-}`). 되돌리기(`ROLLBACK_SHA`)면 그 sha다.
