@@ -1,4 +1,4 @@
-"""오류를 자체 GlitchTip(`glitchtip.honeycombpizza.link`, 프로젝트 `auth-backend`)으로 보낸다(#78).
+"""오류를 자체 GlitchTip(주소는 DSN에 들어 있다, 프로젝트 `auth-backend`)으로 보낸다(#78).
 
 받는 쪽은 sentry.io가 아니라 우리 GlitchTip이고 SDK는 `sentry-sdk`다. 선례는 codemit의
 `backend/core/observability.py`다.

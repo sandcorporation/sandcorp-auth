@@ -1,0 +1,43 @@
+# PR 검사: 린트·타입·시험(백엔드 + sandcorp-authkit). GitHub 호스팅 실행기만 쓰고 비밀값은 쓰지 않는다.
+# 배포는 Jenkins(main push)가 맡는다. 보안 규칙: pull_request_target 금지, self-hosted 금지, 최소 권한.
+name: pr-check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEST_CPU_LIMIT: "0" # 공유 실행기는 CPU 초가 부푼다 — 시험 시간 한도 훅은 로컬 전용
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: uv 설치
+        run: pip install uv==0.12.9
+      - name: MySQL 띄우기 (docker-compose.yml의 db, 127.0.0.1:15444)
+        run: docker compose up -d --wait db
+      - name: 의존성
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config default-libmysqlclient-dev
+          (cd backend && uv sync --frozen)
+          (cd clients/python && uv sync --frozen)
+      - name: 린트
+        run: make lint
+      - name: 타입
+        run: make typecheck
+      - name: 시험
+        run: make test
