@@ -9,7 +9,7 @@ oracle(aarch64, 4코어)은 운영 서비스 열 개 남짓이 CPU를 나눠 쓴
 PR ─▶ pr-check(Actions) ─▶ main 병합
 main push ─▶ Actions release.yml
                check   (pr-check.yml을 workflow_call — PR과 같은 린트·타입·시험·승격 스크립트 시험)
-               image   needs check — image.yml(workflow_call, ubuntu-24.04-arm matrix) ─▶ ghcr.io/sandcorporation/sandcorp-auth:<sha>
+               image   check와 병렬 — image.yml(workflow_call, ubuntu-24.04-arm matrix) ─▶ ghcr.io/sandcorporation/sandcorp-auth:<sha>
                promote needs check·image — production 브랜치를 <sha>로 fast-forward(GITHUB_TOKEN, contents: write는 이 잡만)
 production push(웹훅) ─▶ Jenkins sandcorp-auth(잡 브랜치 */production)
                굽지 않음·검사 없음 → oracle: 이미지가 ghcr에 있는지(상한 5분) → pull → DB 대기 → migrate → web 교체 → 헬스
@@ -42,7 +42,7 @@ Actions가 못 구울 때 Jenkins 「Build with Parameters」에서 `BUILD_ON=je
 
 production은 앞으로만 간다(강제 push 금지). 그래서 되돌리기도 「앞으로 가는 커밋」으로 한다.
 
-**정석: main에 revert PR.** `git revert <나쁜 커밋>` → PR → pr-check 초록 → 병합. release.yml이 검사 → 이미지 → 승격을 그대로 밟고 Jenkins가 그 sha를 배포한다. 운영과 main이 어긋나지 않는다.
+**정석: main에 revert PR.** `git revert <나쁜 커밋>` → PR → pr-check 초록 → 병합. release.yml이 검사 ∥ 이미지 → 승격을 그대로 밟고 Jenkins가 그 sha를 배포한다. 운영과 main이 어긋나지 않는다.
 
 **급할 때: Jenkins `ROLLBACK_SHA`.** `sandcorp-auth` 「Build with Parameters」 → `ROLLBACK_SHA=<되돌릴 커밋 sha 40자>`. 굽기·검사 없이 ghcr에 그 sha 이미지가 있는지 보고(상한 5분) 지금 production의 compose·스크립트로 배포한다.
 - production은 그대로라 다음 승격(main 병합)이 다시 앞으로 간다 — 곧바로 revert PR을 넣어 main을 맞춘다.
