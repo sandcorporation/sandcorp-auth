@@ -12,7 +12,7 @@
 # 펼칠 때 include에 한 줄씩(name·dockerfile·context·build_args) 더하면 된다. 승격은 그 잡 전부가 통과해야 하고,
 # 같은 목록을 Jenkinsfile의 images에도 적는다.
 #
-# 이미지 이름·태그·라벨은 scripts/ci/build-image.sh(Jenkins 비상 길 BUILD_ON=jenkins)와 같다:
+# 이미지 이름·태그·라벨은 배포용 이미지 계약이다:
 #   ghcr.io/sandcorporation/<name>:<커밋 sha 40자>, provenance 없음, 라벨 source·revision.
 # 빌드 캐시는 이미지마다 같은 패키지의 :buildcache 태그(레지스트리 캐시, mode=max). GitHub 캐시(10GB 공유)는 쓰지 않는다.
 name: image
