@@ -2,8 +2,9 @@
 
 `SandcorpTokenGenerator` builds the token response: the access token is #4's signed JWT with
 `aud` = the resource bound to the grant (RFC 8707, which authlib's generators cannot carry, so
-the server passes `resource` explicitly), the refresh token is an opaque random value. Refresh
-tokens are stored as SHA-256 hashes in the live family of the consent they descend from.
+the server passes `resource` explicitly), the refresh token is an opaque random value (a
+rotated one is derived from the token it replaces, `successor_refresh_token`). Refresh tokens
+are stored as SHA-256 hashes in the live family of the consent they descend from.
 With the `openid` scope the response also carries an OpenID Connect ID token
 (`services.oidc`); the access token then keeps only its resource's own scopes.
 """
@@ -17,6 +18,7 @@ from authlib.oauth2.rfc6750 import BearerTokenGenerator
 from django.conf import settings
 from django.contrib.auth.base_user import AbstractBaseUser
 from django.contrib.auth.models import User
+from django.utils.crypto import salted_hmac
 
 from adapters.clock import get_clock
 from oauth.models import (
@@ -39,10 +41,11 @@ from services.members import (
     is_member,
 )
 from services.oidc import OPENID, issue_id_token
-from services.signing import random_token
+from services.signing import b64url, random_token
 from services.tokens import issue_access_token
 
 REFRESH_TOKEN_BYTES = 32
+SUCCESSOR_SALT = "sandcorp.oauth.refresh-successor"
 
 
 class TokenResponse(TypedDict):
@@ -67,6 +70,40 @@ def find_refresh_token(raw: str) -> RefreshToken | None:
         .filter(token_hash=hash_refresh_token(raw))
         .first()
     )
+
+
+def successor_refresh_token(presented: str) -> str:
+    """The refresh token that replaces `presented` on rotation: HMAC(SECRET_KEY, presented).
+    Deterministic, so a refresh in the grace window gets the very same successor again without
+    the raw value being stored; unguessable without both the presented token and the key."""
+    return b64url(salted_hmac(SUCCESSOR_SALT, presented, algorithm="sha256").digest())
+
+
+def graced_successor(
+    spent: RefreshToken, presented: str, *, lock: bool = False
+) -> RefreshToken | None:
+    """The successor to hand out again when `spent` (the token whose value is `presented`) comes
+    back: it was rotated, not revoked, at most REFRESH_TOKEN_REUSE_GRACE ago, and its successor
+    is still the live, unexpired tip of a live family and is the one derived from `presented`.
+    The caller has checked the client. None means it is reuse. `lock` locks the successor row
+    so it cannot be rotated while it is handed out again."""
+    grace = settings.REFRESH_TOKEN_REUSE_GRACE
+    if not grace or spent.replaced_by_id is None or spent.revoked_at is not None:
+        return None
+    rows = RefreshToken.objects.filter(
+        pk=spent.replaced_by_id,
+        family_id=spent.family_id,
+        token_hash=hash_refresh_token(successor_refresh_token(presented)),
+        replaced_by__isnull=True,
+        revoked_at__isnull=True,
+        family__revoked_at__isnull=True,
+    )
+    successor = (rows.select_for_update() if lock else rows).first()
+    if successor is None or successor.is_expired():
+        return None
+    if get_clock().now() - successor.issued_at > grace:
+        return None
+    return successor
 
 
 def access_token_jti(access_token: str) -> str:

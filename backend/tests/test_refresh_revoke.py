@@ -1,18 +1,19 @@
 """Refresh token rotation and reuse detection, revocation (RFC 7009), and consent revocation."""
 
+from collections.abc import Callable
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import jwt
 import pytest
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 
 from audit.models import AuditEvent
 from oauth.grants import SandcorpRefreshTokenGrant
 from oauth.models import Client as OAuthClient
 from oauth.models import Consent, RefreshToken, RefreshTokenFamily, SigningKey
-from oauth.tokens import hash_refresh_token, store_refresh_token
+from oauth.tokens import hash_refresh_token, store_refresh_token, successor_refresh_token
 from tests.conftest import (
     NEWS,
     PORTFOLIO,
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
     from django.test.client import _MonkeyPatchedWSGIResponse as TestResponse
 
 pytestmark = pytest.mark.django_db
+
+GRACE_SECONDS = 30  # settings.REFRESH_TOKEN_REUSE_GRACE
 
 
 @pytest.fixture
@@ -86,10 +89,11 @@ def test_refresh_rotates_the_refresh_token(owner_client: Client, dcr_client: OAu
 
 
 def test_reused_refresh_token_revokes_the_family(
-    owner_client: Client, dcr_client: OAuthClient
+    owner_client: Client, dcr_client: OAuthClient, frozen_clock: FrozenClock
 ) -> None:
     first = obtain_tokens(owner_client, dcr_client)
     second = refresh(owner_client, dcr_client, str(first["refresh_token"])).json()
+    frozen_clock.advance(GRACE_SECONDS + 1)
 
     assert error_of(refresh(owner_client, dcr_client, str(first["refresh_token"]))) == (
         "invalid_grant"
@@ -106,10 +110,11 @@ def test_reused_refresh_token_revokes_the_family(
 
 
 def test_new_authorization_after_reuse_opens_a_new_family(
-    owner_client: Client, dcr_client: OAuthClient
+    owner_client: Client, dcr_client: OAuthClient, frozen_clock: FrozenClock
 ) -> None:
     first = obtain_tokens(owner_client, dcr_client)
     refresh(owner_client, dcr_client, str(first["refresh_token"]))
+    frozen_clock.advance(GRACE_SECONDS + 1)
     refresh(owner_client, dcr_client, str(first["refresh_token"]))  # reuse: family revoked
 
     again = obtain_tokens(owner_client, dcr_client)
@@ -202,30 +207,132 @@ def test_unknown_refresh_token_is_invalid_grant(
     assert error_of(refresh(owner_client, dcr_client, "not-a-token")) == "invalid_grant"
 
 
-def test_losing_a_concurrent_rotation_is_not_reuse(
-    owner_client: Client, dcr_client: OAuthClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Two refreshes with one token: the one that finds it already rotated after validating it
-    (the other committed in between) gets invalid_grant, and the family lives on."""
-    tokens = obtain_tokens(owner_client, dcr_client)
+def rotate_in_between(monkeypatch: pytest.MonkeyPatch, successor: Callable[[str], str]) -> None:
+    """Another refresh with the same token commits its rotation right after this one has
+    validated the token, before this one locks it."""
     original = SandcorpRefreshTokenGrant.validate_token_request
 
     def winner_commits_in_between(grant: SandcorpRefreshTokenGrant) -> None:
         original(grant)
         token: RefreshToken = grant.request.refresh_token
-        winner = store_refresh_token(token.family, "winner", token.scope)
+        winner = store_refresh_token(
+            token.family, successor(grant.request.form["refresh_token"]), token.scope
+        )
         RefreshToken.objects.filter(pk=token.pk).update(replaced_by=winner)
 
     monkeypatch.setattr(
         SandcorpRefreshTokenGrant, "validate_token_request", winner_commits_in_between
     )
 
+
+def test_losing_a_concurrent_rotation_gets_the_winners_successor(
+    owner_client: Client, dcr_client: OAuthClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tokens = obtain_tokens(owner_client, dcr_client)
+    rotate_in_between(monkeypatch, successor_refresh_token)
+
+    loser = refresh(owner_client, dcr_client, str(tokens["refresh_token"]))
+
+    assert loser.status_code == 200, loser.content
+    winner = stored(tokens["refresh_token"]).replaced_by
+    assert winner is not None
+    assert winner.token_hash == hash_refresh_token(loser.json()["refresh_token"])
+    assert RefreshTokenFamily.objects.get().revoked_at is None
+    assert not AuditEvent.objects.filter(kind="token.reuse_detected").exists()
+    assert AuditEvent.objects.filter(kind="token.refresh_grace").count() == 1
+    assert RefreshToken.objects.count() == 2  # the original and the winner's, nothing more
+
+
+def test_losing_to_a_rotation_it_cannot_reproduce_is_not_reuse(
+    owner_client: Client, dcr_client: OAuthClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A successor not derived from the presented token (rotated before the grace existed, or
+    under another SECRET_KEY) cannot be handed out again: invalid_grant, the family lives on."""
+    tokens = obtain_tokens(owner_client, dcr_client)
+    rotate_in_between(monkeypatch, lambda presented: "winner")
+
     loser = refresh(owner_client, dcr_client, str(tokens["refresh_token"]))
 
     assert error_of(loser) == "invalid_grant"
     assert RefreshTokenFamily.objects.get().revoked_at is None
     assert not AuditEvent.objects.filter(kind="token.reuse_detected").exists()
-    assert RefreshToken.objects.count() == 2  # the original and the winner's, nothing more
+    assert RefreshToken.objects.count() == 2
+
+
+def test_refreshing_again_within_the_grace_gets_the_same_successor(
+    owner_client: Client, dcr_client: OAuthClient, frozen_clock: FrozenClock
+) -> None:
+    first = obtain_tokens(owner_client, dcr_client)
+    raw = str(first["refresh_token"])
+    winner = refresh(owner_client, dcr_client, raw).json()
+    frozen_clock.advance(GRACE_SECONDS)
+
+    again = refresh(owner_client, dcr_client, raw)
+
+    assert again.status_code == 200, again.content
+    body = again.json()
+    assert set(body) == TOKEN_FIELDS
+    assert body["refresh_token"] == winner["refresh_token"]
+    assert body["access_token"] != winner["access_token"]
+    assert claims(body["access_token"])["aud"] == PORTFOLIO
+    successor = stored(winner["refresh_token"])
+    assert stored(raw).replaced_by == successor
+    assert RefreshToken.objects.count() == 2  # no second branch: one live token in the family
+    assert RefreshTokenFamily.objects.get().revoked_at is None
+    assert not AuditEvent.objects.filter(kind="token.reuse_detected").exists()
+    assert AuditEvent.objects.filter(kind="token.refreshed").count() == 1
+    event = AuditEvent.objects.get(kind="token.refresh_grace")
+    assert event.client_id == dcr_client.client_id
+    assert event.detail == {
+        "client_id": dcr_client.client_id,
+        "resource": PORTFOLIO,
+        "scope": "admin",
+        "jti": claims(body["access_token"])["jti"],
+        "family": successor.family.pk,
+        "successor": successor.pk,
+    }
+    # The family goes on from the successor.
+    assert refresh(owner_client, dcr_client, body["refresh_token"]).status_code == 200
+
+
+def test_a_successor_already_rotated_is_not_handed_out_again(
+    owner_client: Client, dcr_client: OAuthClient
+) -> None:
+    """Within the grace, but the successor is spent too: someone else is ahead — reuse."""
+    first = obtain_tokens(owner_client, dcr_client)
+    second = refresh(owner_client, dcr_client, str(first["refresh_token"])).json()
+    refresh(owner_client, dcr_client, second["refresh_token"])
+
+    assert error_of(refresh(owner_client, dcr_client, str(first["refresh_token"]))) == (
+        "invalid_grant"
+    )
+
+    assert RefreshTokenFamily.objects.get().revoked_reason == "refresh_reuse"
+    assert not AuditEvent.objects.filter(kind="token.refresh_grace").exists()
+
+
+def test_grace_is_for_the_tokens_own_client(
+    owner_client: Client, dcr_client: OAuthClient, cimd_client: OAuthClient
+) -> None:
+    first = obtain_tokens(owner_client, dcr_client)
+    refresh(owner_client, dcr_client, str(first["refresh_token"]))
+
+    response = refresh(owner_client, cimd_client, str(first["refresh_token"]))
+
+    assert error_of(response) == "invalid_grant"
+    assert RefreshTokenFamily.objects.get().revoked_at is None
+    assert not AuditEvent.objects.filter(kind="token.refresh_grace").exists()
+
+
+def test_a_revoked_family_gets_no_grace(owner_client: Client, dcr_client: OAuthClient) -> None:
+    first = obtain_tokens(owner_client, dcr_client)
+    second = refresh(owner_client, dcr_client, str(first["refresh_token"])).json()
+    assert revoke(owner_client, dcr_client, second["refresh_token"]).status_code == 200
+
+    assert error_of(refresh(owner_client, dcr_client, str(first["refresh_token"]))) == (
+        "invalid_grant"
+    )
+    assert not AuditEvent.objects.filter(kind="token.refresh_grace").exists()
 
 
 def test_revoking_a_refresh_token_revokes_its_family(
@@ -378,3 +485,14 @@ def test_wider_consent_revokes_the_old_family(
     assert event.actor == "farrar142"
     assert event.detail["reason"] == "consent_replaced"
     assert event.detail["families"] == [old_family.pk]
+
+
+@override_settings(REFRESH_TOKEN_REUSE_GRACE=timedelta(0))
+def test_a_zero_grace_turns_it_off(owner_client: Client, dcr_client: OAuthClient) -> None:
+    first = obtain_tokens(owner_client, dcr_client)
+    refresh(owner_client, dcr_client, str(first["refresh_token"]))
+
+    assert error_of(refresh(owner_client, dcr_client, str(first["refresh_token"]))) == (
+        "invalid_grant"
+    )
+    assert RefreshTokenFamily.objects.get().revoked_reason == "refresh_reuse"

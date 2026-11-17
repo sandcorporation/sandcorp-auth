@@ -195,16 +195,25 @@ def test_an_authorization_code_is_exchanged_once(
         assert _successes(results) == 1
 
 
-def test_a_refresh_token_is_rotated_once(
+def test_a_refresh_token_is_rotated_once_and_every_racer_gets_the_successor(
     logged_in_client: Client, dcr_client: OAuthClient, signing_key: SigningKey
 ) -> None:
+    """An app's API calls refreshing together (#89): one rotation, the rest are within the
+    grace and get the same successor; the family lives on."""
+    from oauth.models import RefreshToken
+
     tokens = obtain_tokens(logged_in_client, dcr_client)
     token = str(tokens["refresh_token"])
 
     results = race(lambda: refresh(Client(), dcr_client, token))
 
     assert all(not isinstance(r, BaseException) for r in results), results
-    assert _successes(results) == 1
+    assert _successes(results) == THREADS
+    successors = {r.json()["refresh_token"] for r in results if not isinstance(r, BaseException)}
+    assert len(successors) == 1
+    assert RefreshToken.objects.count() == 2
+    assert RefreshTokenFamily.objects.get().revoked_at is None
+    assert refresh(Client(), dcr_client, successors.pop()).status_code == 200
 
 
 def test_concurrent_withdrawals_withdraw_once_and_queue_one_webhook(

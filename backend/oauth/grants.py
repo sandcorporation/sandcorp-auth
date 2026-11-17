@@ -16,7 +16,11 @@ back revokes the refresh token family its consent opened (`oauth.tokens.report_c
 
 `SandcorpRefreshTokenGrant` rotates refresh tokens: every refresh returns a new refresh token in
 the same family and marks the old one `replaced_by` it. A replaced or revoked refresh token that
-comes back is reuse: the whole family is revoked. The family's resource is the only possible
+comes back is reuse: the whole family is revoked. Except within REFRESH_TOKEN_REUSE_GRACE of
+its rotation, from its own client, while its successor is still the family's live tip
+(`oauth.tokens.graced_successor`): that is a concurrent refresh (tabs, retries), and it gets a new
+access token and the very same successor again (`token.refresh_grace`) — the family still has
+exactly one live refresh token. The family's resource is the only possible
 `aud`, and a narrower `scope` may be asked for, never a wider one.
 
 `SandcorpClientCredentialsGrant` (#76) is for machine clients only (`services.machine_clients`):
@@ -49,8 +53,10 @@ from oauth.tokens import (
     TokenResponse,
     access_token_jti,
     find_refresh_token,
+    graced_successor,
     report_code_reuse,
     revoke_family,
+    successor_refresh_token,
 )
 from services import audit
 from services.machine_clients import ResourceRefused, ScopeRefused, machine_grant, machine_sub
@@ -306,6 +312,8 @@ class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no 
 
     # Set by save_token: the refresh token that replaces the one presented.
     issued: RefreshToken | None = None
+    # Set by create_token_response in the grace window: the successor handed out again.
+    regranted: RefreshToken | None = None
 
     def validate_token_request(self) -> None:
         # authlib's order, except that request.client is known before the refresh token is
@@ -327,6 +335,8 @@ class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no 
         if found is None or not found.check_client(client):
             return None
         if found.replaced_by_id is not None or found.revoked_at is not None:
+            if graced_successor(found, refresh_token) is not None:
+                return found  # a concurrent refresh; create_token_response settles it locked
             # Reuse: someone holds a token that was already spent. Trust nobody in the family.
             family = found.family
             revoke_family(family, "refresh_reuse")
@@ -345,23 +355,28 @@ class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no 
     def create_token_response(self) -> tuple[int, TokenResponse, Headers]:
         token: RefreshToken = self.request.refresh_token
         # Lock the presented token and check it is still unspent, so two concurrent refreshes
-        # with the same token cannot both rotate it. The loser gets invalid_grant (not reuse:
-        # its token was valid when it was sent).
+        # with the same token cannot both rotate it. The loser finds it rotated: within the
+        # grace window it gets the winner's successor again, otherwise invalid_grant (not
+        # reuse: its token was valid when it was sent).
         with transaction.atomic():
-            unspent = (
+            locked = (
                 RefreshToken.objects.select_for_update()
-                .filter(
-                    pk=token.pk,
-                    replaced_by__isnull=True,
-                    revoked_at__isnull=True,
-                    family__revoked_at__isnull=True,  # e.g. revoked by a withdrawal meanwhile
-                )
-                .exists()
+                .filter(pk=token.pk, family__revoked_at__isnull=True)  # e.g. a withdrawal
+                .first()
             )
-            if unspent:
-                response: tuple[int, TokenResponse, Headers] = super().create_token_response()
-                return response
+            if locked is not None:
+                if locked.replaced_by_id is None and locked.revoked_at is None:
+                    return self._respond()
+                self.regranted = graced_successor(
+                    locked, self.request.form["refresh_token"], lock=True
+                )
+                if self.regranted is not None:
+                    return self._respond()
         raise InvalidGrantError("Invalid 'refresh_token' in request.")
+
+    def _respond(self) -> tuple[int, TokenResponse, Headers]:
+        response: tuple[int, TokenResponse, Headers] = super().create_token_response()
+        return response
 
     def generate_token(
         self,
@@ -382,16 +397,39 @@ class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no 
             resource=token.family.resource,  # the access token's `aud`, always the family's
             auth_time=token.auth_time,  # OpenID Connect Core 12.2: the original login; no nonce
         )
+        if "refresh_token" in generated:
+            generated["refresh_token"] = successor_refresh_token(self.request.form["refresh_token"])
         return generated
 
     def save_token(self, token: TokenResponse) -> None:
-        self.issued = self.server.save_token(token, self.request)
+        if self.regranted is None:
+            self.issued = self.server.save_token(token, self.request)
+            return
+        # Grace: the successor is already stored; nothing new to keep, but say so.
+        family = self.regranted.family
+        client: Client = self.request.client
+        audit.record(
+            audit.TOKEN_REFRESH_GRACE,
+            actor=family.user.get_username(),
+            client_id=client.client_id,
+            ip=request_ip(self.request),
+            detail={
+                "client_id": client.client_id,
+                "resource": family.resource.url,
+                "scope": token["scope"],
+                "jti": access_token_jti(token["access_token"]),
+                "family": family.pk,
+                "successor": self.regranted.pk,
+            },
+        )
 
     def authenticate_user(self, refresh_token: RefreshToken) -> User:
         user: User = refresh_token.family.user
         return user
 
     def revoke_old_credential(self, refresh_token: RefreshToken) -> None:
+        if self.regranted is not None:
+            return  # already replaced by the successor handed out again
         if self.issued is None:
             raise RuntimeError("a rotated refresh token needs its replacement")
         RefreshToken.objects.filter(pk=refresh_token.pk).update(replaced_by=self.issued)
