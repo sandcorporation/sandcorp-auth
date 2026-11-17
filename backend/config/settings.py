@@ -116,6 +116,9 @@ if not SIGNING_KEY_ENCRYPTION_KEY:
 ACCESS_TOKEN_LIFETIME = timedelta(minutes=10)
 AUTHORIZATION_CODE_LIFETIME = timedelta(minutes=5)
 REFRESH_TOKEN_LIFETIME = timedelta(days=90)
+# A refresh token rotated this recently that comes back from its client is a concurrent
+# refresh (tabs, retries), not reuse: it gets the same successor again (oauth.tokens).
+REFRESH_TOKEN_REUSE_GRACE = timedelta(seconds=int(env("REFRESH_TOKEN_REUSE_GRACE_SECONDS", "30")))
 
 # Owner login (accounts app). Django `login()` happens only after password + TOTP.
 LOGIN_URL = "/login"

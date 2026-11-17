@@ -31,13 +31,14 @@ docker compose -p sandcorp-auth -f docker-compose.prod.yml -f docker-compose.ora
 
 | 이름 | 필수 | 뜻 | 운영 값 / 만드는 법 |
 | --- | --- | --- | --- |
-| `DJANGO_SECRET_KEY` | 필수 | Django 서명 비밀(세션·CSRF). 없으면 기동 실패 | `python3 -c 'import secrets; print(secrets.token_urlsafe(50))'` |
+| `DJANGO_SECRET_KEY` | 필수 | Django 서명 비밀(세션·CSRF, 리프레시 토큰 유예의 다음 토큰 계산 — 바꾸면 그 순간 유예 안의 동시 갱신만 실패한다). 없으면 기동 실패 | `python3 -c 'import secrets; print(secrets.token_urlsafe(50))'` |
 | `DJANGO_ALLOWED_HOSTS` | 필수 | 받는 Host(쉼표 구분). **첫 값**을 헬스 체크가 Host 헤더로 쓴다 | `auth.sandcorp.co.kr` |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | 필수 | 폼 POST(로그인·동의·admin)를 받는 origin | `https://auth.sandcorp.co.kr` |
 | `DJANGO_ADMIN_PATH` | 필수(사실상) | Django admin 경로. 생략하면 `admin/` | 추측하기 어려운 값. `python3 -c 'import secrets; print(secrets.token_urlsafe(12))'` |
 | `SITE_URL` | 선택 | 서비스 절대 URL = 토큰 `iss`·메타데이터 `issuer`. 끝 `/` 없이 | `https://auth.sandcorp.co.kr`(기본값과 같음) |
 | `SIGNING_KEY_ENCRYPTION_KEY` | 필수 | DB의 서명 개인 키를 암호화하는 Fernet 키. 없으면 기동 실패. **잃으면 서명 키를 못 푼다**(5절) | `docker run --rm sandcorp-auth-web:latest python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`(이미지가 아직 없으면 `cryptography`가 깔린 아무 Python) |
 | `SESSION_AGE_SECONDS` | 선택 | 이 서비스의 로그인 세션 수명(초). 로그인 시각부터 세며 활동해도 늘지 않고 브라우저를 닫아도 유지된다 | 기본 `604800`(7일) |
+| `REFRESH_TOKEN_REUSE_GRACE_SECONDS` | 선택 | 리프레시 토큰 회전 뒤 같은 클라이언트의 같은 토큰을 재사용이 아닌 동시 갱신으로 보는 시간(초). 그 안에는 같은 새 토큰을 다시 준다. `0`이면 유예 없음 | 기본 `30` |
 | `TRUST_X_FORWARDED_FOR` | 선택 | 호출자 IP를 `X-Forwarded-For` 첫 값으로 볼지. 요청 제한·감사 로그의 IP가 여기서 나온다 | NPMplus 뒤라 `1`(기본). 직접 노출할 때만 `0` |
 | `DJANGO_LOG_LEVEL` | 선택 | 루트 로그 수준 | 기본 `INFO` |
 | `GUNICORN_WORKERS` | 선택 | gunicorn 워커 수 | 기본 `2`(web은 cpus 0.6, 512MB) |
@@ -171,6 +172,7 @@ admin → 감사 사건(`/<admin>/audit/auditevent/`). 읽기 전용(추가·수
 | `authorization_code.issued` | 인가 코드 발급 |
 | `token.issued` | 코드 교환으로 토큰 발급 |
 | `token.refreshed` | 리프레시로 토큰 재발급 |
+| `token.refresh_grace` | 방금 회전된 리프레시 토큰이 유예 안에 같은 클라이언트에서 다시 옴(동시 갱신) → 같은 새 토큰을 다시 줌 |
 | `token.revoked` | `/revoke` 또는 admin 패밀리 폐기 |
 | `token.reuse_detected` | 이미 쓴 리프레시 토큰이 다시 옴 → 패밀리 전체 폐기 |
 | `token.code_reuse_detected` | 이미 쓴 인가 코드가 다시 옴 |
@@ -296,7 +298,7 @@ docker exec sandcorp-auth-web-1 python manage.py dumpdata --natural-foreign --in
 | 커넥터 등록이 안 된다 | DCR이면 `client.registered`가 있는지(없으면 등록 요청 10회/시간 한도), CIMD면 `client.cimd_rejected`의 detail(이유) |
 | 동의 뒤 사이트로 못 돌아간다 | `consent.granted`·`authorization_code.issued`가 있으면 사이트 쪽(리다이렉트 URI 일치, state) 문제 |
 | 토큰 교환이 실패한다 | `token.issued`가 없다 → web 로그(`docker logs sandcorp-auth-web-1`)의 `/token` 응답 코드, 기밀 클라이언트면 시크릿(401 `invalid_client`), `token.code_reuse_detected` |
-| 갑자기 다시 로그인하라 한다 | `token.reuse_detected`(리프레시 토큰이 두 번 쓰여 패밀리가 폐기됨), `consent.revoked`, `token.revoked` |
+| 갑자기 다시 로그인하라 한다 | `token.reuse_detected`(리프레시 토큰이 유예(30초) 밖에서 두 번 쓰여 패밀리가 폐기됨 — 바로 앞에 `token.refresh_grace`가 많으면 클라이언트가 갱신을 동시에 오래 끌고 있다), `consent.revoked`, `token.revoked` |
 | 사이트가 토큰을 거부한다 | `signing_keys list`(활성 키), 메타데이터의 `issuer`가 `https://auth.sandcorp.co.kr`인지(`SITE_URL`), 토큰 `aud`가 사이트의 resource URL인지 |
 
 ## 7. 알려진 제약
