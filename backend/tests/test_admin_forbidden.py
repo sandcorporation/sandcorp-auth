@@ -45,7 +45,7 @@ def test_csrf_failure_shows_retry_page(db: None) -> None:
 
 
 def test_owner_on_member_screen_gets_page_not_bare_403(logged_in_client: Client) -> None:
-    response = logged_in_client.get("/account")
+    response = logged_in_client.get("/account/withdraw")  # members only; /account is not (#100)
     assert response.status_code == 403
     assert "이 화면은 열 수 없습니다" in response.content.decode()
 

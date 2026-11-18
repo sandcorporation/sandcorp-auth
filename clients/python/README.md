@@ -13,10 +13,10 @@ Sandcorp 자원 서버(portfolio, metrics, news, flow)가 auth.sandcorp.co.kr의
 dependencies = ["sandcorp-authkit[django]"]
 
 [tool.uv.sources]
-sandcorp-authkit = { git = "ssh://git@github.com/sandcorporation/sandcorp-auth.git", subdirectory = "clients/python", tag = "authkit-v0.2.0" }
+sandcorp-authkit = { git = "ssh://git@github.com/sandcorporation/sandcorp-auth.git", subdirectory = "clients/python", tag = "authkit-v0.3.0" }
 ```
 
-또는 `uv add "sandcorp-authkit[django] @ git+ssh://git@github.com/sandcorporation/sandcorp-auth.git@authkit-v0.2.0#subdirectory=clients/python"`. 태그를 고정하고, 올릴 때는 저장소마다 PR 하나.
+또는 `uv add "sandcorp-authkit[django] @ git+ssh://git@github.com/sandcorporation/sandcorp-auth.git@authkit-v0.3.0#subdirectory=clients/python"`. 태그를 고정하고, 올릴 때는 저장소마다 PR 하나.
 
 저장소가 private이라 주소는 ssh다. Docker 빌드는 BuildKit SSH 전달(`RUN --mount=type=ssh`)로 키를 받고 키는 이미지에 남지 않는다. Jenkins/oracle 변형과 GitHub Actions 변형은 [`docs/resource-servers.md`](../../docs/resource-servers.md) 3절.
 
@@ -27,12 +27,12 @@ sandcorp-authkit = { git = "ssh://git@github.com/sandcorporation/sandcorp-auth.g
 | 이름 | 무엇 |
 |---|---|
 | `validate_access_token(token, *, issuer, audience, required_scope, jwks, clock, extra_claims_hook=None) -> AccessToken` | 문서 3절 T1–T10 → 훅 → S1. 실패는 `TokenRejected`(401 `invalid_token`), 스코프 부족은 `InsufficientScope`(403) |
-| `AccessToken` | `sub`, `client_id`, `scopes`(frozenset), `jti`, `iat`, `exp`, `acct`(문자열이면 그 값, 아니면 None) |
+| `AccessToken` | `sub`, `client_id`, `scopes`(frozenset), `jti`, `iat`, `exp`, `acct`(문자열이면 그 값, 아니면 None), `via_social`(`amr`에 `"fed"` — 대표의 소셜 로그인 세션 토큰, 0.3.0) |
 | `TokenRejected`, `InsufficientScope(required_scope)` | 예외. 메시지는 서버 로그용 — 응답에 싣지 않는다 |
 | `JwksCache(fetch_jwks, clock, *, ttl_seconds=600, min_refetch_seconds=60)` | 4절 J1–J5. 스레드 안전. 프로세스마다 하나 |
 | `http_jwks_fetcher(url, *, timeout=5.0, max_bytes=65536)` | 표준 라이브러리 `urllib`로 JWKS를 받는 `fetch_jwks` |
 | `Clock`(Protocol, `now() -> aware datetime`), `SystemClock` | 시각 주입 |
-| `owner_only(owner_sub)`, `owner_or_member(owner_sub)` | `extra_claims_hook`으로 넘기는 계정 규칙. 대표만 받는 사이트는 앞의 것(T11), 일반 사용자도 받는 사이트(flow)는 뒤의 것(10절 A1–A3) |
+| `owner_only(owner_sub)`, `owner_or_member(owner_sub)` | `extra_claims_hook`으로 넘기는 계정 규칙. 대표만 받는 사이트는 앞의 것(T11·T12 — 소셜 세션 대표 토큰도 거부), 일반 사용자도 받는 사이트(flow)는 뒤의 것(10절 A1–A4). 뒤의 것을 쓰는 사이트는 대표 전용 기능을 `token.acct is None and not token.via_social`일 때만 연다 |
 | `ClaimsHook`, `JwksFetcher` | 타입 별칭 |
 | 상수 `ALGORITHM`, `REQUIRED_CLAIMS`, `EXP_LEEWAY_SECONDS`, `JWKS_TTL_SECONDS`, `JWKS_MIN_REFETCH_SECONDS`, `MEMBER_SUB`, `ACCOUNT_KIND_CLAIM` | |
 
@@ -352,4 +352,4 @@ uv run mypy              # strict
 
 ## 버전
 
-`authkit-vX.Y.Z` 태그. 0.1.0: `tokens`·`resource`. 0.2.0: `django`·`login`·`testing`(0.1.0 서명은 그대로, 추가만).
+`authkit-vX.Y.Z` 태그. 0.1.0: `tokens`·`resource`. 0.2.0: `django`·`login`·`testing`(0.1.0 서명은 그대로, 추가만). 0.3.0(auth #100): `amr` 검사(문자열 배열이 아니면 거부), `AccessToken.via_social`, `owner_only`가 `amr`에 `"fed"`인 토큰 거부, `testing.access_token_claims(amr=…)`.

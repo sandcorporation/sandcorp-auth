@@ -11,6 +11,10 @@
   <summary>대표 계정으로 로그인</summary>
   {% include "accounts/_owner_login_form.html" %}
 </details>
+{% elif step_up %}
+<p class="auth-lead" data-slot="step-up">비밀번호와 OTP로 다시 확인합니다.</p>
+{% if error %}<div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">로그인하지 못했습니다</span>{{ error }}</div>{% endif %}
+{% include "accounts/_owner_login_form.html" %}
 {% else %}
 <p class="auth-lead">대표 계정으로 로그인합니다.</p>
 {% if error %}<div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">로그인하지 못했습니다</span>{{ error }}</div>{% endif %}

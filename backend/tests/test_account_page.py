@@ -49,8 +49,11 @@ def test_account_page_lists_logins_email_and_no_apps(member_client: Client, memb
     assert member_client.get("/account/identities").status_code == 200
 
 
-def test_the_owner_has_no_account_page(logged_in_client: Client) -> None:
-    assert logged_in_client.get("/account").status_code == 403
+def test_the_owner_account_page_has_only_its_sign_in_methods(logged_in_client: Client) -> None:
+    """#100: the owner links social logins here; email and withdrawal stay members only."""
+    page = logged_in_client.get("/account")
+    assert page.status_code == 200
+    assert 'data-slot="email"' not in page.content.decode()
     assert logged_in_client.post("/account/email", {"email": "a@b.co"}).status_code == 403
 
 

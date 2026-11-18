@@ -13,7 +13,7 @@ and `clock` (anything with `now() -> aware datetime`).
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal, NotRequired, Protocol, TypedDict
 
@@ -70,6 +70,9 @@ class AccessToken:
     iat: int
     exp: int
     acct: Literal["owner", "member", "machine"] = "owner"
+    # `amr` has "fed": the owner signed in with a social login (#100, §10 A4). Owner-only
+    # features stay closed to such a token.
+    via_social: bool = False
 
 
 class JwksCache:
@@ -132,10 +135,19 @@ def validate_access_token(
     clock: Clock,
 ) -> AccessToken:
     """Return the verified token, or raise TokenRejected (401) / InsufficientScope (403)."""
-    verified = _verify(token, jwks=jwks, audience=audience, clock=clock)
+    verified, claims = _verify_with_claims(token, jwks=jwks, audience=audience, clock=clock)
     if verified.sub != owner_sub:  # T11
         raise TokenRejected("not the owner")
+    if _via_social(claims):  # T12: the owner's social login session (#100)
+        raise TokenRejected("owner token from a social login")
     return _with_scope(verified, required_scope)
+
+
+def _via_social(claims: dict[str, object]) -> bool:
+    amr = claims.get("amr", [])
+    if not isinstance(amr, list) or not all(isinstance(value, str) for value in amr):
+        raise TokenRejected("claim has the wrong type")
+    return "fed" in amr
 
 
 def validate_account_access_token(
@@ -153,7 +165,9 @@ def validate_account_access_token(
     if ACCOUNT_KIND_CLAIM not in claims:  # A1: no `acct` is an owner token
         if verified.sub != owner_sub:
             raise TokenRejected("not the owner")
-        return _with_scope(verified, required_scope)
+        # A4: an owner token from a social login (#100) passes, marked: owner-only features
+        # check `via_social` too.
+        return _with_scope(replace(verified, via_social=_via_social(claims)), required_scope)
     if claims[ACCOUNT_KIND_CLAIM] != "member":  # A2
         raise TokenRejected("unknown account kind")
     if MEMBER_SUB.fullmatch(verified.sub) is None:  # A3

@@ -42,6 +42,7 @@ from services.members import (
 )
 from services.oidc import OPENID, issue_id_token
 from services.signing import b64url, random_token
+from services.step_up import SOCIAL_AMR, member_level
 from services.tokens import issue_access_token
 
 REFRESH_TOKEN_BYTES = 32
@@ -128,10 +129,13 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
         resource: Resource | None = None,
         auth_time: datetime | None = None,
         nonce: str | None = None,
+        via_social: bool = False,
     ) -> TokenResponse:
         """`auth_time` (the owner's login) and `nonce` go into the ID token, which is made
-        only when the scope has `openid`. A machine client (#76) gets a token for itself:
-        no account, `sub` = `client:<client_id>`, `acct` = `machine`, never a refresh token."""
+        only when the scope has `openid`. `via_social` (the owner's social login session,
+        #100): only a member-level grant, and `amr: ["fed"]` in the access and ID tokens.
+        A machine client (#76) gets a token for itself: no account,
+        `sub` = `client:<client_id>`, `acct` = `machine`, never a refresh token."""
         if client.kind == Client.Kind.MACHINE:
             return self._machine_token(client, scope, resource, user)
         if not isinstance(user, User) or resource is None:
@@ -150,6 +154,9 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
                 MemberTermsPending,
             ) as error:
                 raise RuntimeError(f"refusing a member token: {error!r}") from error
+        social = via_social and not member
+        if social and not member_level(client, granted, resource):
+            raise RuntimeError("refusing an owner-only grant from a social login session")
         own = set(resource.scopes.filter(name__in=granted).values_list("name", flat=True))
         token = TokenResponse(
             access_token=issue_access_token(
@@ -158,6 +165,7 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
                 client_id=client.client_id,
                 scopes=[name for name in granted if name in own],
                 acct=MEMBER if member else None,
+                amr=SOCIAL_AMR if social else None,
             ),
             token_type="Bearer",
             expires_in=int(settings.ACCESS_TOKEN_LIFETIME.total_seconds()),
@@ -174,6 +182,7 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
                 scopes=granted,
                 auth_time=auth_time,
                 nonce=nonce,
+                amr=SOCIAL_AMR if social else None,
             )
         return token
 
@@ -221,6 +230,7 @@ def store_refresh_token(
     scope: str,
     jti: str = "",
     auth_time: datetime | None = None,
+    via_social: bool = False,
 ) -> RefreshToken:
     now = get_clock().now()
     return RefreshToken.objects.create(
@@ -229,6 +239,7 @@ def store_refresh_token(
         scope=scope,
         jti=jti,
         auth_time=auth_time,
+        via_social=via_social,
         issued_at=now,
         expires_at=now + settings.REFRESH_TOKEN_LIFETIME,
     )

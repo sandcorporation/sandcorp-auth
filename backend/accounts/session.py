@@ -1,6 +1,8 @@
 """The "half-authenticated" session state: password passed, TOTP not yet.
 
-Django `login()` is called only after TOTP, so `request.user.is_authenticated` means both steps.
+Django `login()` is called only after TOTP, so for a password login `request.user.is_authenticated`
+means both steps. The owner may also sign in with a linked social login (#100): whether the
+session passed password + TOTP is `services.step_up.has_strong_auth`.
 """
 
 from django.contrib.auth.models import User

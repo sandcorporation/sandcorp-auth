@@ -266,6 +266,9 @@ class AuthorizationCode(AuthorizationCodeMixin, models.Model):  # type: ignore[m
     nonce = models.CharField(max_length=255, blank=True, default="")
     # When the owner last logged in (password + TOTP) before the code was issued.
     auth_time = models.DateTimeField()
+    # Issued to the owner in a session signed in with a social login, without a recent
+    # password + TOTP (#100): only member-level grants, and its tokens carry `amr: ["fed"]`.
+    via_social = models.BooleanField(default=False)
     created_at = models.DateTimeField()
     used_at = models.DateTimeField(null=True, blank=True)
 
@@ -333,6 +336,8 @@ class RefreshToken(TokenMixin, models.Model):  # type: ignore[misc]  # authlib h
     # The owner's login time behind the code this token descends from (the ID token's
     # `auth_time` on refresh). Null for tokens issued before OpenID Connect was added.
     auth_time = models.DateTimeField(null=True, blank=True)
+    # Descends from a `via_social` code (#100); every successor keeps it.
+    via_social = models.BooleanField(default=False)
     issued_at = models.DateTimeField()
     expires_at = models.DateTimeField()
     revoked_at = models.DateTimeField(null=True, blank=True)

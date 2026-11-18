@@ -147,6 +147,7 @@ compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운�
 | 웹훅 등록·비밀 재발급 | `manage clients webhook --client-id <id> --url https://…`(처음이면 비밀도 발급) / `--rotate-secret` / `--remove`, 또는 admin 클라이언트 변경 화면 「웹훅 URL」·「웹훅 비밀 재발급」 | 탈퇴한 일반 사용자를 알리는 `user.deleted`를 받을 주소. 비밀은 한 번만 출력된다(DB엔 Fernet 암호문). 감사 `client.webhook_changed`. 11절 |
 | 웹훅 전송·대기열 보기 | `manage webhooks deliver` / `manage webhooks list` | cron 5분마다(11절). `list`는 아직 못 보낸 것과 포기한 것(`gave_up`)을 보인다 |
 | 보유 기간 정리 | `manage members purge [--dry-run]` | cron 하루 한 번(11절). 탈퇴 30일 지난 계정의 개인정보, 1년 지난 감사 기록, 30일 지난 끝난 웹훅 전송, 하루 넘게 쉰 요청 제한 카운터를 지운다(ADR 0004) |
+| 일반 사용자 계정을 대표에 합치기 | `manage members merge --from <m_…> --into <대표 username> [--dry-run]` | 대장 몫. 소셜 로그인·앱 동의를 대표로 옮기고, 리프레시 토큰·세션을 끊고, `user.merged`를 보낸 뒤 계정을 지운다. 감사 `member.merged`. 11절 |
 | 약관 버전 목록 | `manage terms list` | `*`가 시행 중인 현재 버전 |
 
 `<admin>`은 `DJANGO_ADMIN_PATH` 값. admin은 이 서비스 로그인(비밀번호 + TOTP)을 거친다. `client_id`는 `-`로 시작할 수 있으므로 명령에는 `--client-id=<id>`처럼 `=`로 붙여 쓴다(띄우면 옵션으로 읽혀 「expected one argument」).
@@ -420,6 +421,16 @@ docker exec -it sandcorp-auth-web-1 python manage.py terms list   # 두 줄 모�
 
 웹훅은 그 사용자가 **한 번이라도 동의한** 클라이언트에만 간다. `SIGNING_KEY_ENCRYPTION_KEY`를 바꾸면 웹훅 비밀도 모두 다시 발급해야 한다(복호화할 수 없게 된다).
 
+### 계정 합치기(#100)
+
+같은 사람의 일반 사용자 계정을 대표 계정에 합친다(대장이 실행한다). 하위 서비스 데이터는 지우지 않고 옮긴다.
+
+1. `docker exec sandcorp-auth-web-1 python manage.py members merge --from <m_…> --into farrar142 --dry-run` — 옮길 소셜 로그인·앱 동의·폐기할 패밀리·세션·약관 동의 기록·`user.merged` 웹훅 건수만 찍는다. 아무것도 바꾸지 않는다.
+2. 대표에 **같은 제공자**의 소셜 로그인이 이미 있으면 「합치지 않았습니다: … already has a login of kakao」로 멈춘다(종료 코드 1, 바뀐 것 없음). 대표 쪽 연결을 「내 계정」에서 해제한 뒤 다시 돈다.
+3. `--dry-run`을 빼고 실행한다. 한 트랜잭션: 소셜 로그인 → 대표, 앱 동의 → 대표(대표에 같은 앱·리소스 동의가 있으면 스코프를 합침), 그 계정의 리프레시 토큰 패밀리 폐기(`account_merged`)·세션 삭제, 동의했던 클라이언트 중 웹훅이 있는 곳에 `user.merged {from_sub, to_sub}` 대기열(`user.deleted`는 보내지 않는다), 계정 삭제.
+4. 약관 동의 기록은 계정과 함께 지워진다(대표는 약관 대상이 아니다). 무엇에 언제 동의했는지는 감사 `member.merged`의 `terms_agreed`에 남아 감사 기록 보유 기간(1년)을 따른다. 그 계정의 옛 감사 기록(`actor`=옛 `sub`)도 그대로 1년.
+5. 5분 안에 `webhooks deliver`가 보낸다. `webhooks list`로 확인. 받는 쪽 규격은 `docs/resource-server-token-validation.md` 11절 「계정 합치기」.
+
 ### 보유 기간
 
 | 무엇 | 언제 지우나 |
@@ -442,3 +453,13 @@ docker exec -it sandcorp-auth-web-1 python manage.py terms list   # 두 줄 모�
 - **버리는 것**: 404·403·`SuspiciousOperation`(`DisallowedHost` 포함)·4xx 상태 예외, `django.security.*` 로그, `manage.py shell`에서 손으로 친 명령의 예외.
 - **연동 확인**: 배포 뒤 `docker exec sandcorp-auth-web-1 python manage.py glitchtip_test` → `GlitchTipOnboardingTest("연동 시험 auth <날짜>")` 한 건과 이벤트 id를 찍는다. DSN이 없으면 종료 코드 1. GlitchTip에서 release가 배포 sha, 환경이 `production`인지 본다. 확인 뒤 그 이슈는 해결로 표시한다.
 - **진단 자동화**: work의 Orca 자동화 「GlitchTip prod 오류 진단 — auth」가 1분마다 `~/workspace/ops-shared/glitchtip/pick.py --service auth --projects auth-backend`로 미해결 production 오류를 하나 집어 진단만 해 대장 메일함에 `[운영] auth …`로 보낸다(고치지 않는다).
+
+## 13. 대표 소셜 로그인과 관리 step-up(#100)
+
+대표 계정도 「내 계정」(`/account`)에서 카카오·GitHub·Google 로그인을 연결·해제할 수 있다(비밀번호+TOTP로 들어온 세션에서만; 대표는 마지막 연결도 해제할 수 있다). 다른 계정(일반 사용자)에 이미 연결된 소셜 로그인은 연결되지 않는다 — 그때는 11절 「계정 합치기」.
+
+- 소셜 로그인으로 들어온 대표 세션은 `sub`=대표(`farrar142`)로 **일반 사용자가 받을 수 있는 요청만** 받는다: 클라이언트가 일반 사용자를 받고(`allows_members`), 스코프가 그 리소스의 일반 사용자 스코프 안. 그런 코드·토큰에는 `amr: ["fed"]`가 실린다(사이트 규칙 `docs/resource-server-token-validation.md` T12·A4).
+- 관리 화면(`/<DJANGO_ADMIN_PATH>`), 대표 전용 클라이언트·스코프(`admin`·`editor`, 일반 사용자를 받지 않는 클라이언트의 `login` 등), 「내 계정」의 연결·해제는 **최근 비밀번호+TOTP**가 있어야 열린다. 소셜 세션이면 비밀번호+TOTP 화면(`/login?next=…`)으로 보낸 뒤 원래 곳으로 돌아온다.
+- 「최근」은 그 세션이 비밀번호+TOTP를 거친 뒤 `SESSION_AGE_SECONDS`(기본 7일) 안. 소셜 로그인은 이 표시를 지운다. 배포 직후에는 기존 세션에 표시가 없으므로 관리 화면에서 한 번 더 비밀번호+TOTP를 묻는다.
+- 소셜 세션 코드로 받은 리프레시 토큰은 갱신해도 `amr: ["fed"]`이고, 클라이언트가 더는 일반 사용자를 받지 않으면 `/token`에서 `invalid_grant`.
+

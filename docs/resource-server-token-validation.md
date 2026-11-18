@@ -64,6 +64,8 @@ OIDC 로그인 정보 스코프(`openid`·`profile`·`email`)는 리소스 스�
 
 일반 사용자(ADR 0003)의 토큰에는 위 클레임에 더해 `"acct": "member"`가 있고 `sub`는 `m_` + ULID다. **대표 토큰에는 `acct`가 없다.** 이 절의 규칙(T11)은 그대로이고, 일반 사용자를 받는 사이트만 10절을 따른다.
 
+대표가 **소셜 로그인으로** 들어온 세션(#100, 비밀번호+TOTP를 거치지 않음)에서 발급된 대표 토큰에는 `"amr": ["fed"]`(RFC 8176, 문자열 배열)이 있다. 이런 토큰은 일반 사용자도 받을 수 있는 요청(클라이언트가 일반 사용자를 받고, 스코프가 그 리소스의 일반 사용자 스코프 안)에만 나온다. 비밀번호+TOTP로 들어온 대표 토큰에는 `amr`이 없다(지금까지와 같다). 대표만 받는 사이트는 T12로 거른다.
+
 기계 클라이언트(#76, ADR 0006)의 토큰에는 `"acct": "machine"`이 있고 `sub`는 `client:<client_id>`다. T11·A2가 이 토큰을 거르므로 대표·일반 사용자만 받는 사이트는 할 일이 없다. 기계 토큰을 받을 자리만 12절을 따른다.
 
 ## 3. 검증 규칙
@@ -91,6 +93,7 @@ OIDC 로그인 정보 스코프(`openid`·`profile`·`email`)는 리소스 스�
 - **T9.** `aud`가 자기 리소스 URL과 정확히 같지 않으면 거부. 문자열 완전 일치만 인정한다: 배열, 끝 `/`, 대소문자 차이, 다른 사이트의 URL 모두 거부. portfolio는 `https://sandcorp.co.kr/mcp`, 뉴스는 `https://news.sandcorp.co.kr/mcp`.
 - **T10.** 현재 시각(유닉스 초)이 `exp + 30`보다 크면 거부. `iat`·`nbf`는 시각 비교를 하지 않는다(존재·타입만 T6·T7).
 - **T11.** `sub`가 설정값 `AUTH_OWNER_SUB`와 정확히 같지 않으면(대소문자 구분, 앞뒤 공백 없이) 거부.
+- **T12.** `amr` 클레임이 있는데 문자열 배열이 아니면 거부. 배열에 `"fed"`가 있으면(대표의 소셜 로그인 세션, #100) 거부. `sandcorp-authkit` 0.3.0의 `owner_only`가 이것까지 한다.
 
 ### 스코프
 
@@ -369,7 +372,9 @@ T1~T10은 3절 그대로, **T11 대신 A1~A3**, 그다음 S1.
 - **A2.** `acct`가 있는데 값이 문자열 `"member"`와 정확히 같지 않으면 거부(`"owner"`, 대소문자 차이, 빈 문자열, 배열, `null` 모두 거부).
 - **A3.** `acct`가 `"member"`인데 `sub`가 위 정규식에 맞지 않으면 거부.
 
-A1~A3 위반은 401 `invalid_token`. 대표 전용 기능(그 사이트의 관리 화면 등)은 A1을 통과한 토큰(`acct` 없음)에만 연다 — 일반 사용자 토큰의 스코프로 판단하지 않는다.
+- **A4.** `acct`가 없는 대표 토큰의 `amr`이 문자열 배열이 아니면 거부. `"fed"`가 있으면(대표의 소셜 로그인 세션, #100) 받되 **대표 전용 기능은 열지 않는다** — 일반 사용자와 같은 기능만 `sub`(= `AUTH_OWNER_SUB`)로 연다.
+
+A1~A4 위반은 401 `invalid_token`. 대표 전용 기능(그 사이트의 관리 화면 등)은 A1을 통과하고 `amr`에 `"fed"`가 없는 토큰에만 연다 — 일반 사용자 토큰의 스코프로 판단하지 않는다. `sandcorp-authkit` 0.3.0에서는 `AccessToken.acct is None and not AccessToken.via_social`.
 
 ### ID 토큰과 userinfo(로그인 정보 스코프)
 
@@ -429,7 +434,7 @@ python manage.py clients webhook --client-id <id> --url https://news.sandcorp.co
 - **W2.** `|지금 − t| ≤ 300초`가 아니면 거부(400). 시계가 맞아야 한다(NTP).
 - **W3.** `HMAC-SHA256(비밀, "<t>." + 받은 본문 바이트)`의 hex가 `v1`과 같아야 한다. 비교는 상수 시간(`hmac.compare_digest`). 다르면 거부(401).
 - **W4.** 본문의 `id`를 이미 처리했으면 아무것도 하지 않고 2xx(재시도·중복 전송). 처리한 `id`는 적어도 3일(재시도 기간보다 길게) 기억한다.
-- **W5.** `type`이 `user.deleted`면 `sub`의 세션·데이터를 정리하고 2xx. 모르는 `type`은 무시하고 2xx(나중에 종류가 늘 수 있다).
+- **W5.** `type`이 `user.deleted`면 `sub`의 세션·데이터를 정리하고 2xx. `user.merged`면 아래 「계정 합치기」대로 옮기고 2xx. 모르는 `type`은 무시하고 2xx(나중에 종류가 늘 수 있다).
 - 처리는 짧게 끝낸다(10초 안에 답하지 않으면 실패로 보고 다시 보낸다). 무거운 정리는 큐에 넣고 먼저 2xx로 답한다.
 
 ### Python 예시
@@ -478,6 +483,18 @@ def verify_sandcorp_webhook(
 ```
 
 이 예시는 `backend/tests/test_withdrawal.py`가 이 문서에서 그대로 꺼내 auth가 보낸 실제 요청으로 시험한다(문서와 구현이 어긋나면 시험이 깨진다).
+
+### 계정 합치기(`user.merged`, #100)
+
+일반 사용자 계정을 대표 계정에 합치면(`manage.py members merge`, `docs/operations.md` 11절) auth는 그 일반 사용자가 **한 번이라도 동의한 클라이언트** 중 웹훅 URL이 있는 곳에 `user.merged`를 보낸다. `user.deleted`는 보내지 않는다 — 받는 사이트는 **데이터를 지우지 말고** `from_sub`의 데이터를 `to_sub`로 옮긴다(이미 `to_sub`의 데이터가 있으면 합친다). `from_sub`의 로그인 세션은 끝낸다(auth도 그 계정의 리프레시 토큰을 폐기했다).
+
+```json
+{"id":"01JB0Z8F3W4Q2Y6K7M9N0P1R2S","type":"user.merged","from_sub":"m_01J9…","to_sub":"farrar142"}
+```
+
+- 본문 키는 `id`·`type`·`from_sub`·`to_sub` 넷뿐이다(`occurred_at` 없음).
+- 헤더·서명·재시도·W1~W4는 `user.deleted`와 똑같다(`X-Sandcorp-Event: user.merged`).
+- `to_sub`는 지금은 언제나 대표(`AUTH_OWNER_SUB`)다. 합친 뒤 그 사람은 소셜 로그인으로 `to_sub` 토큰(`amr: ["fed"]`, 10절 A4)을 받는다.
 
 ## 12. 기계 클라이언트 토큰(#76, ADR 0006)
 

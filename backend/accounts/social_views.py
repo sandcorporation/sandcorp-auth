@@ -37,6 +37,7 @@ from services.social import (
     begin,
     complete,
     link_identity,
+    may_link,
     pending_signup,
     provider_named,
     providers_with_email,
@@ -47,6 +48,7 @@ from services.social import (
     unlink_identity,
 )
 from services.social_providers import SocialLoginFailed, SocialProvider, configured_providers
+from services.step_up import drop_strong, is_weak_owner_session
 from services.terms import needs_terms
 from services.withdrawal import CONFIRM_PHRASE, withdraw_member
 
@@ -82,6 +84,7 @@ def _login_url(next_url: str) -> str:
 def _sign_into(request: HttpRequest, user: User, next_url: str) -> HttpResponse:
     request.session.pop(PENDING_SIGNUP_KEY, None)
     login(request, user, backend=BACKEND)  # also sets last_login, the ID token's auth_time
+    drop_strong(request)  # a social login never opens the owner's admin and grants (#100)
     if needs_terms(user):  # a new account, or a new version of the terms (#37)
         return (
             redirect("/terms?" + urlencode({"next": next_url})) if next_url else redirect("/terms")
@@ -160,12 +163,14 @@ def _finish_link(
     if not isinstance(user, User) or not user.is_authenticated or user.pk != user_id:
         audit.record(audit.SOCIAL_LOGIN_FAILED, ip=ip, detail={"reason": "link_session_changed"})
         return _failed(request, "", "link_session_changed", "")
+    if is_weak_owner_session(request):  # the step-up ran out between start and callback
+        return _step_up()
     try:
         linked = link_identity(user, profile, ip=ip)
     except IdentityTaken:
         messages.error(request, "이 로그인은 이미 다른 Sandcorp 계정에 연결되어 있습니다.")
     except NotAMember as error:
-        raise PermissionDenied("only members link social logins") from error
+        raise PermissionDenied("only members and the owner link social logins") from error
     else:
         label = ExternalIdentity.Provider(profile.provider).label
         if linked:
@@ -206,6 +211,24 @@ def signup_confirm(request: HttpRequest) -> HttpResponse:
     return render(request, "accounts/signup_confirm.html", context)
 
 
+class _StepUp(Exception):
+    """The owner without a recent password + TOTP: ask for it, then come back."""
+
+
+def _holder_or_403(request: HttpRequest) -> User:
+    """A member, or the owner after a recent password + TOTP (raises _StepUp otherwise)."""
+    user = request.user
+    if not isinstance(user, User) or not may_link(user):
+        raise PermissionDenied("for members and the owner only")
+    if is_weak_owner_session(request):
+        raise _StepUp
+    return user
+
+
+def _step_up() -> HttpResponse:
+    return redirect("/login?" + urlencode({"next": "/account"}))
+
+
 def _member_or_403(request: HttpRequest) -> User:
     user = request.user
     if not isinstance(user, User) or not is_member(user):
@@ -217,8 +240,13 @@ def _member_or_403(request: HttpRequest) -> User:
 @require_GET
 def account(request: HttpRequest) -> HttpResponse:
     """「내 계정」: the member's sign-in methods (link / unlink), account email, connected apps
-    (disconnect) and the way into withdrawal (#39)."""
-    user = _member_or_403(request)
+    (disconnect) and the way into withdrawal (#39). The owner (#100) sees only its sign-in
+    methods, after a recent password + TOTP."""
+    try:
+        user = _holder_or_403(request)
+    except _StepUp:
+        return _step_up()
+    is_owner = not is_member(user)
     linked = list(ExternalIdentity.objects.filter(user_id=user.pk).order_by("linked_at", "pk"))
     linked_providers = {identity.provider for identity in linked}
     context = {
@@ -228,13 +256,14 @@ def account(request: HttpRequest) -> HttpResponse:
         "identities": [
             {"pk": i.pk, "label": i.get_provider_display(), "email": i.email} for i in linked
         ],
-        "can_unlink": len(linked) > 1,
+        "can_unlink": is_owner or len(linked) > 1,
+        "is_owner": is_owner,
         "link_choices": [
             {"name": p.name, "label": p.label}
             for p in configured_providers().values()
             if p.name not in linked_providers
         ],
-        "apps": connected_apps(user),
+        "apps": [] if is_owner else connected_apps(user),
     }
     return render(request, "accounts/account.html", context)
 
@@ -269,7 +298,10 @@ def disconnect(request: HttpRequest, client_pk: int) -> HttpResponse:
 @require_POST
 def link_start(request: HttpRequest, provider: str) -> HttpResponse:
     social = _provider_or_404(provider)
-    user = _member_or_403(request)
+    try:
+        user = _holder_or_403(request)
+    except _StepUp:
+        return _step_up()
     url, pending = begin(social, "link", user_id=user.pk)
     request.session[PENDING_SOCIAL_KEY] = dict(pending)
     return redirect(url)
@@ -278,7 +310,10 @@ def link_start(request: HttpRequest, provider: str) -> HttpResponse:
 @login_required
 @require_POST
 def unlink(request: HttpRequest, identity_id: int) -> HttpResponse:
-    user = _member_or_403(request)
+    try:
+        user = _holder_or_403(request)
+    except _StepUp:
+        return _step_up()
     try:
         unlink_identity(user, identity_id, ip=client_ip(request))
     except IdentityNotFound as error:

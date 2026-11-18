@@ -16,7 +16,7 @@ A member (ADR 0003) also gets `acct: "member"` in userinfo and the ID token (the
 member's own flag (a typed-in email is not verified).
 """
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Final, NotRequired, TypedDict
@@ -41,6 +41,7 @@ CLAIMS_SUPPORTED: Final = [
     "iat",
     "auth_time",
     "nonce",
+    "amr",
     "name",
     "preferred_username",
     "email",
@@ -64,6 +65,7 @@ class IdTokenClaims(IdentityClaims):
     exp: int
     auth_time: int
     nonce: NotRequired[str]
+    amr: NotRequired[list[str]]
 
 
 def identity_claims(user: User, scopes: Collection[str]) -> IdentityClaims:
@@ -91,8 +93,10 @@ def issue_id_token(
     scopes: Collection[str],
     auth_time: datetime,
     nonce: str | None,
+    amr: Sequence[str] | None = None,
 ) -> str:
-    """Sign an ID token for `client_id`. Lives as long as an access token."""
+    """Sign an ID token for `client_id`. Lives as long as an access token. `amr` only for the
+    owner's social login session (#100)."""
     key = active_signing_key()
     iat = int(get_clock().now().timestamp())
     identity = identity_claims(user, scopes)
@@ -116,6 +120,8 @@ def issue_id_token(
         claims["email_verified"] = identity["email_verified"]
     if nonce:
         claims["nonce"] = nonce
+    if amr is not None:
+        claims["amr"] = list(amr)
     return jwt.encode(
         dict(claims), key.private_key, algorithm=ALGORITHM, headers={"kid": key.kid, "typ": "JWT"}
     )

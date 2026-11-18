@@ -31,6 +31,10 @@ JWKS_MAX_BYTES = 64 * 1024
 EXP_LEEWAY_SECONDS = 30
 REQUIRED_CLAIMS = ("iss", "sub", "aud", "exp", "iat", "jti", "client_id", "scope")
 ACCOUNT_KIND_CLAIM = "acct"
+AMR_CLAIM = "amr"
+SOCIAL_AMR = "fed"
+"""In `amr` (RFC 8176): the owner signed in with a social login, without password + TOTP.
+Such a token never opens the owner's admin features (auth #100)."""
 MEMBER_SUB = re.compile(r"m_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 
 
@@ -68,6 +72,10 @@ class AccessToken:
     acct: str | None = None
     """The `acct` claim when it is a string (`"member"` on member tokens), else None.
     Only meaningful after a hook such as `owner_or_member` has checked it."""
+    via_social: bool = False
+    """`amr` has `"fed"`: an owner token from a social login session (auth #100). On a site
+    that takes members too, open the owner-only features only when `acct` is None and this is
+    False. `owner_only` already rejects such tokens."""
 
 
 type JwksFetcher = Callable[[], object]
@@ -235,6 +243,9 @@ def validate_access_token(
         raise TokenRejected("wrong audience")
     if clock.now().timestamp() > exp + EXP_LEEWAY_SECONDS:
         raise TokenRejected("expired")
+    amr = claims.get(AMR_CLAIM, [])
+    if not isinstance(amr, list) or not all(isinstance(value, str) for value in amr):
+        raise TokenRejected("claim has the wrong type")
     if extra_claims_hook is not None:
         extra_claims_hook(MappingProxyType(claims))
 
@@ -250,6 +261,7 @@ def validate_access_token(
         iat=iat,
         exp=exp,
         acct=acct if isinstance(acct, str) else None,
+        via_social=is_via_social(claims),
     )
 
 
@@ -258,14 +270,23 @@ def _is_int(value: object) -> TypeIs[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def is_via_social(claims: Mapping[str, object]) -> bool:
+    """`amr` lists `"fed"` (an owner token from a social login session, auth #100)."""
+    amr = claims.get(AMR_CLAIM)
+    return isinstance(amr, list) and SOCIAL_AMR in amr
+
+
 def owner_only(owner_sub: str) -> ClaimsHook:
     """T11 for sites that take only the owner: `sub` must equal `owner_sub` exactly, and an
-    owner token never carries `acct` (§10 A1), so a token with `acct` is rejected too.
+    owner token never carries `acct` (§10 A1), so a token with `acct` is rejected too. A token
+    from the owner's social login session (`amr` has `"fed"`, §10 A4) is rejected as well.
     An empty `owner_sub` (setting not filled in) rejects every token."""
 
     def hook(claims: Mapping[str, object]) -> None:
         if ACCOUNT_KIND_CLAIM in claims:
             raise TokenRejected("not an owner token")
+        if is_via_social(claims):
+            raise TokenRejected("owner token from a social login")
         if not owner_sub or claims["sub"] != owner_sub:
             raise TokenRejected("not the owner")
 

@@ -667,9 +667,11 @@ def test_another_accounts_login_cannot_be_unlinked(member_client: Client, member
     assert other.identities.count() == 1
 
 
-def test_the_owner_has_no_social_logins_page(logged_in_client: Client) -> None:
-    assert logged_in_client.get("/account/identities").status_code == 403
-    assert logged_in_client.post("/account/identities/link/google").status_code == 403
+def test_the_owner_has_a_social_logins_page(logged_in_client: Client) -> None:
+    """#100: the owner (after password + TOTP) links social logins too; `test_owner_social`."""
+    assert logged_in_client.get("/account/identities").status_code == 200
+    linking = logged_in_client.post("/account/identities/link/google")
+    assert linking.status_code == 302 and linking["Location"].startswith("https://")
 
 
 def test_the_logins_page_needs_a_session(client: Client) -> None:

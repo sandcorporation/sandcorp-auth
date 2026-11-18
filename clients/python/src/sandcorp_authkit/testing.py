@@ -98,11 +98,13 @@ def access_token_claims(
     acct: str | None = None,
     jti: str | None = None,
     lifetime: int = TOKEN_LIFETIME_SECONDS,
+    amr: list[str] | None = None,
     **overrides: object,
 ) -> Claims:
     """Claims shaped like sandcorp-auth's (backend/services/tokens.py) at `clock.now()`.
-    `acct="member"` makes a member token; owner tokens carry no `acct`. None drops a claim
-    (`jti=None` generates one)."""
+    `acct="member"` makes a member token; owner tokens carry no `acct`. `amr=["fed"]` makes
+    the owner's social login token (auth #100). None drops a claim (`jti=None` generates
+    one)."""
     iat = int(clock.now().timestamp())
     claims: Claims = {
         "iss": issuer,
@@ -115,6 +117,7 @@ def access_token_claims(
         "jti": jti or secrets.token_hex(8),
     }
     claims["acct"] = acct
+    claims["amr"] = amr
     return _without_none(claims, overrides)
 
 
