@@ -1,6 +1,6 @@
-"""HTTP to the social login providers (Google, Kakao): the token endpoint, Google's JWKS and
-Kakao's user API. The hosts are fixed provider hosts, not caller-chosen URLs (unlike CIMD in
-`http.py`), so there is no address pinning here.
+"""HTTP to the social login providers (Google, Kakao, GitHub): the token endpoint, Google's JWKS,
+Kakao's user API and GitHub's `/user`·`/user/emails`. The hosts are fixed provider hosts, not
+caller-chosen URLs (unlike CIMD in `http.py`), so there is no address pinning here.
 
 Services call `get_provider_http()`; tests install a fake with `set_provider_http()`
 (tests/conftest.py `fake_providers`, autouse, so no test ever reaches a real provider).

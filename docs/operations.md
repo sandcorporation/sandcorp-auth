@@ -49,6 +49,7 @@ docker compose -p sandcorp-auth -f docker-compose.prod.yml -f docker-compose.ora
 | `DB_PASSWORD` | 필수 | 그 계정의 비밀번호 | HeatWave에서 계정을 만들 때 정한 값 |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | 선택 | Google 로그인(일반 사용자) OAuth 클라이언트. 하나라도 비면 Google 버튼이 없고 `/login/google*`은 404 | 보류(9절) — 지금은 비워 둔다 |
 | `KAKAO_CLIENT_ID` / `KAKAO_CLIENT_SECRET` | 선택 | Kakao 로그인. `KAKAO_CLIENT_ID`는 「REST API 키」, 시크릿은 「Client Secret」 코드. 하나라도 비면 Kakao 버튼이 없다 | 9절 Kakao 절차(codemit과 같은 비즈 앱의 기존 키) |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | 선택 | GitHub 로그인(#91). GitHub OAuth App의 Client ID·Client secret. 하나라도 비면 GitHub 버튼이 없다 | 9절 GitHub 절차 |
 | `HTTP_BIND` / `HTTP_PORT` | 선택 | web을 묶을 호스트 주소·포트 | oracle 덮어쓰기 기본 `172.17.0.1` / `18093` |
 
 compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운영 `0` 고정), `DJANGO_STATIC_ROOT`(이미지 기본값).
@@ -333,16 +334,17 @@ rm .env
 
 이 절차를 처음 통과시킨 기록(DCR → 인가 → 동의 → 교환 → 리프레시 → 폐기 → admin 감사 로그)은 #12의 PR에 있다.
 
-## 9. 소셜 로그인(Google·Kakao) 콘솔 등록
+## 9. 소셜 로그인(Google·Kakao·GitHub) 콘솔 등록
 
-일반 사용자(ADR 0003)는 Google·Kakao로만 들어온다(#36). 콘솔 등록과 `.env` 값은 조율자가 넣고, 넣은 뒤 재배포한다. 키가 비어 있는 제공자는 버튼이 숨겨질 뿐 나머지는 그대로 돈다. 지금 운영은 Kakao만 켠다(Google 보류).
+일반 사용자(ADR 0003)는 Google·Kakao·GitHub로만 들어온다(#36, GitHub #91). 콘솔 등록과 `.env` 값은 조율자가 넣고, 넣은 뒤 재배포한다. 키가 비어 있는 제공자는 버튼이 숨겨질 뿐 나머지는 그대로 돈다. 지금 운영은 Kakao만 켠다(Google 보류, GitHub는 OAuth App 등록 뒤 켠다).
 
-콜백(Redirect) URI는 `SITE_URL` + 아래 경로다. 운영은 이 두 개를 그대로 등록한다.
+콜백(Redirect) URI는 `SITE_URL` + 아래 경로다. 운영은 이 경로를 그대로 등록한다.
 
 - Google: `https://auth.sandcorp.co.kr/login/google/callback`
 - Kakao: `https://auth.sandcorp.co.kr/login/kakao/callback`
+- GitHub: `https://auth.sandcorp.co.kr/login/github/callback`
 
-서비스는 두 제공자 모두 `state`(세션에 묶음, 10분·1회)와 PKCE S256을 쓰고, Google에는 `nonce`도 보낸다. Google `id_token`은 Google JWKS로 RS256 서명·`aud`(= `GOOGLE_CLIENT_ID`)·`iss`(`accounts.google.com`)·`exp`·`nonce`를 검사한다. Kakao는 액세스 토큰으로 `/v2/user/me`를 읽는다(OIDC 아님). 콜백 실패는 로그인 실패와 같은 IP 제한(`login`, 15분 5회)에 세고, 감사 로그 `login.social_failed`의 `reason`에 까닭이 남는다(`state_mismatch`·`id_token_nonce`·`id_token_aud`·`id_token_expired`·`google_token_status_400` 등). 사용자가 제공자 화면에서 취소한 것(`cancelled`)은 세지 않는다.
+서비스는 세 제공자 모두 `state`(세션에 묶음, 10분·1회)와 PKCE S256을 쓰고, Google에는 `nonce`도 보낸다. Google `id_token`은 Google JWKS로 RS256 서명·`aud`(= `GOOGLE_CLIENT_ID`)·`iss`(`accounts.google.com`)·`exp`·`nonce`를 검사한다. Kakao는 액세스 토큰으로 `/v2/user/me`를 읽는다(OIDC 아님). GitHub는 액세스 토큰으로 `api.github.com/user`(제공자 `sub` = 숫자 `id` — `login` 이름은 바뀔 수 있다)와 `/user/emails`(primary이면서 verified인 주소만 이메일로 쓰고, 없으면 이메일 없음)를 읽는다(OIDC 아님). 콜백 실패는 로그인 실패와 같은 IP 제한(`login`, 15분 5회)에 세고, 감사 로그 `login.social_failed`의 `reason`에 까닭이 남는다(`state_mismatch`·`id_token_nonce`·`id_token_aud`·`id_token_expired`·`google_token_status_400` 등). 사용자가 제공자 화면에서 취소한 것(`cancelled`)은 세지 않는다.
 
 ### Google — 보류
 
@@ -357,11 +359,18 @@ auth는 새 앱을 만들지 않고 codemit이 쓰는 **기존 카카오 비즈 
 3. Web 플랫폼 사이트 도메인 등록은 **필요 없다**(지금 카카오는 Redirect URI만으로 된다).
 4. 키는 **기존 비즈 앱 것을 재사용**한다: 앱 키의 **REST API 키** → `KAKAO_CLIENT_ID`, 보안의 **Client Secret** 코드 → `KAKAO_CLIENT_SECRET`. Client Secret은 **재발급하지 않는다**(재발급하면 codemit도 함께 바꿔야 한다).
 
+### GitHub (GitHub OAuth App) — #91
+
+1. GitHub → Settings(조직 앱이면 조직 Settings) → Developer settings → **OAuth Apps** → New OAuth App. Application name `Sandcorp`, Homepage URL `https://auth.sandcorp.co.kr`, **Authorization callback URL** `https://auth.sandcorp.co.kr/login/github/callback`(코드에 고정 — `SITE_URL` + `/login/github/callback`). Device Flow는 켜지 않는다.
+2. 만든 앱의 **Client ID** → `GITHUB_CLIENT_ID`, **Generate a new client secret** → `GITHUB_CLIENT_SECRET`(한 번만 보인다).
+3. 권한은 앱 설정이 아니라 요청 scope로 정해진다: `read:user user:email`. auth는 `/user`와 `/user/emails`만 읽는다.
+4. GitHub App이 아니라 OAuth App이다(사용자 신원만 필요하고 저장소 권한이 없다). PKCE S256은 OAuth App에서도 받는다 — 콘솔에서 따로 켤 것은 없다.
+
 ### 넣은 뒤 확인
 
-1. `.env`에 `KAKAO_CLIENT_ID`·`KAKAO_CLIENT_SECRET`을 넣고 재배포한다(Google 두 값은 비워 둔다).
+1. `.env`에 `KAKAO_CLIENT_ID`·`KAKAO_CLIENT_SECRET`(GitHub를 켤 때는 `GITHUB_CLIENT_ID`·`GITHUB_CLIENT_SECRET`도)을 넣고 재배포한다(Google 두 값은 비워 둔다).
 2. 일반 사용자를 허용한 클라이언트(`clients members --client-id <id> --allow`)의 `/authorize`로 가면 로그인 화면에 「Kakao로 계속하기」가 보인다(Google은 보류라 없다). 허용하지 않은 클라이언트나 `/login`을 바로 열면 비밀번호 폼만 보인다.
-3. 각 버튼으로 끝까지 로그인해 본 뒤 admin의 감사 로그에 `member.created`·`login.social_succeeded`가 남는지 본다. 실패하면 `login.social_failed`의 `reason`을 본다(`google_token_status_400`·`kakao_token_status_401`이면 대개 Redirect URI나 시크릿 불일치).
+3. 각 버튼으로 끝까지 로그인해 본 뒤 admin의 감사 로그에 `member.created`·`login.social_succeeded`가 남는지 본다. 실패하면 `login.social_failed`의 `reason`을 본다(`google_token_status_400`·`kakao_token_status_401`·`github_no_access_token`이면 대개 Redirect URI나 시크릿 불일치).
 
 ## 10. 약관 문서(#37)
 

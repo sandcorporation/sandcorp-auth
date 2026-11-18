@@ -19,7 +19,13 @@ from audit.models import AuditEvent
 from oauth.models import Client as OAuthClient
 from oauth.models import SigningKey
 from services import audit
-from services.social_providers import GOOGLE_TOKEN_URL, KAKAO_TOKEN_URL
+from services.social_providers import (
+    GITHUB_EMAILS_URL,
+    GITHUB_TOKEN_URL,
+    GITHUB_USER_URL,
+    GOOGLE_TOKEN_URL,
+    KAKAO_TOKEN_URL,
+)
 from tests.conftest import (
     MEMBER_EMAIL,
     FakeProviders,
@@ -105,6 +111,28 @@ def kakao_login(
     query = start(client, "kakao", next_url)
     fake.kakao_codes["the-code"] = user
     return callback(client, "kakao", query)
+
+
+def github_answer(
+    github_id: int = 583231, emails: list[dict[str, object]] | None = None, **user: object
+) -> dict[str, object]:
+    """What GitHub says for one code: the `/user` document and the `/user/emails` list."""
+    return {
+        "user": {"id": github_id, "login": "octocat", "name": "모나 리자", **user},
+        "emails": emails if emails is not None else [],
+    }
+
+
+def github_email(address: str, *, primary: bool, verified: bool) -> dict[str, object]:
+    return {"email": address, "primary": primary, "verified": verified, "visibility": None}
+
+
+def github_login(
+    client: Client, fake: FakeProviders, next_url: str, answer: dict[str, object]
+) -> TestResponse:
+    query = start(client, "github", next_url)
+    fake.github_codes["the-code"] = answer
+    return callback(client, "github", query)
 
 
 def terms_url(next_url: str) -> str:
@@ -206,6 +234,87 @@ def test_kakao_email_counts_as_verified_only_when_kakao_says_so(
     )
     identity = ExternalIdentity.objects.get(provider="kakao")
     assert identity.email == "k@example.com" and identity.email_verified is False
+
+
+def test_github_login_keeps_the_numeric_id_and_the_primary_verified_email(
+    client: Client, fake_providers: FakeProviders, next_url: str
+) -> None:
+    query = start(client, "github", next_url)
+    assert query["scope"] == "read:user user:email"
+    assert query["code_challenge_method"] == "S256" and query["code_challenge"]
+    assert "nonce" not in query  # OAuth 2.0 only, no id_token
+    fake_providers.github_codes["the-code"] = github_answer(
+        emails=[
+            github_email("old@example.com", primary=False, verified=True),
+            github_email("Mona@Example.com", primary=True, verified=True),
+        ]
+    )
+    response = callback(client, "github", query)
+    assert response.status_code == 302 and response["Location"] == terms_url(next_url)
+    identity = ExternalIdentity.objects.get(provider="github")
+    assert identity.provider_sub == "583231"
+    assert identity.email == "Mona@Example.com" and identity.email_verified is True
+    assert identity.display_name == "모나 리자"
+    url, form = fake_providers.posted[-1]
+    assert url == GITHUB_TOKEN_URL and form["code_verifier"] and form["code"] == "the-code"
+    assert fake_providers.requested[-2:] == [GITHUB_USER_URL, GITHUB_EMAILS_URL]
+
+
+@pytest.mark.parametrize(
+    "emails",
+    [
+        [],
+        [github_email("p@example.com", primary=True, verified=False)],
+        [
+            github_email("p@example.com", primary=True, verified=False),
+            github_email("other@example.com", primary=False, verified=True),
+        ],
+    ],
+)
+def test_github_without_a_verified_primary_email_has_no_email(
+    client: Client, fake_providers: FakeProviders, next_url: str, emails: list[dict[str, object]]
+) -> None:
+    response = github_login(
+        client, fake_providers, next_url, github_answer(emails=emails, name=None)
+    )
+    assert response.status_code == 302 and response["Location"] == terms_url(next_url)
+    identity = ExternalIdentity.objects.get(provider="github")
+    assert identity.email == "" and identity.email_verified is False
+    assert identity.display_name == "octocat"  # no name: the login
+
+
+@pytest.mark.parametrize(
+    ("answer", "reason"),
+    [
+        ({"user": {"id": True}, "emails": []}, "github_no_id"),
+        ({"user": {"login": "octocat"}, "emails": []}, "github_no_id"),
+        ({"user": {"id": 1}, "emails": {"email": "x@example.com"}}, "github_emails_not_list"),
+        ({"user": {"id": 1}, "emails": "denied"}, "github_emails_status_403"),
+        ({"token_error": "bad_verification_code"}, "github_no_access_token"),
+    ],
+)
+def test_github_answers_that_cannot_be_used_are_refused(
+    client: Client,
+    fake_providers: FakeProviders,
+    next_url: str,
+    answer: dict[str, object],
+    reason: str,
+) -> None:
+    response = github_login(client, fake_providers, next_url, answer)
+    assert response.status_code == 400, response.content
+    assert "_auth_user_id" not in client.session
+    assert not ExternalIdentity.objects.exists()
+    assert AuditEvent.objects.get(kind=audit.SOCIAL_LOGIN_FAILED).detail["reason"] == reason
+
+
+def test_a_verified_github_email_of_another_account_shows_the_notice_first(
+    client: Client, fake_providers: FakeProviders, next_url: str, member: User
+) -> None:
+    emails = [github_email(MEMBER_EMAIL, primary=True, verified=True)]
+    response = github_login(client, fake_providers, next_url, github_answer(emails=emails))
+    assert response.status_code == 302 and response["Location"] == "/signup/confirm"
+    assert not ExternalIdentity.objects.filter(provider="github").exists()
+    assert "이전에 Google로 가입하셨습니다" in client.get("/signup/confirm").content.decode()
 
 
 # --- what the callback refuses -------------------------------------------------------------
@@ -337,6 +446,7 @@ def test_social_buttons_show_only_for_a_client_that_allows_members(
 ) -> None:
     page = client.get("/login?" + urlencode({"next": next_url})).content.decode()
     assert 'data-provider="google"' in page and 'data-provider="kakao"' in page
+    assert 'data-provider="github"' in page
     assert 'name="password"' in page  # the owner's login stays
 
     OAuthClient.objects.filter(pk=members_app.pk).update(allows_members=False)
@@ -356,16 +466,22 @@ def test_the_start_route_refuses_a_client_that_does_not_allow_members(
     assert client.get("/login/google").status_code == 302  # no next: back to /login
 
 
-def test_a_provider_without_its_settings_is_hidden_and_404(client: Client, next_url: str) -> None:
-    with override_settings(KAKAO_CLIENT_SECRET=""):
-        _assert_kakao_hidden(client, next_url)
-
-
-def _assert_kakao_hidden(client: Client, next_url: str) -> None:
-    page = client.get("/login?" + urlencode({"next": next_url})).content.decode()
-    assert 'data-provider="google"' in page and 'data-provider="kakao"' not in page
-    assert client.get("/login/kakao?" + urlencode({"next": next_url})).status_code == 404
-    assert client.get("/login/kakao/callback?state=x&code=y").status_code == 404
+@pytest.mark.parametrize(
+    ("provider", "empty"),
+    [
+        ("kakao", "KAKAO_CLIENT_SECRET"),
+        ("github", "GITHUB_CLIENT_ID"),
+        ("github", "GITHUB_CLIENT_SECRET"),
+    ],
+)
+def test_a_provider_without_its_settings_is_hidden_and_404(
+    client: Client, next_url: str, provider: str, empty: str
+) -> None:
+    with override_settings(**{empty: ""}):
+        page = client.get("/login?" + urlencode({"next": next_url})).content.decode()
+        assert 'data-provider="google"' in page and f'data-provider="{provider}"' not in page
+        assert client.get(f"/login/{provider}?" + urlencode({"next": next_url})).status_code == 404
+        assert client.get(f"/login/{provider}/callback?state=x&code=y").status_code == 404
 
 
 # --- same email ----------------------------------------------------------------------------
@@ -429,6 +545,8 @@ def link(client: Client, fake: FakeProviders, provider: str, **profile: object) 
     query = {k: v[0] for k, v in parse_qs(urlsplit(response["Location"]).query).items()}
     if provider == "google":
         fake.google_codes["the-code"] = google_claims(query, **profile)
+    elif provider == "github":
+        fake.github_codes["the-code"] = github_answer(**profile)  # type: ignore[arg-type]
     else:
         fake.kakao_codes["the-code"] = kakao_user(**profile)  # type: ignore[arg-type]
     return callback(client, provider, query)
@@ -444,6 +562,19 @@ def test_a_member_links_another_login(
     assert AuditEvent.objects.filter(kind=audit.IDENTITY_LINKED, actor=member.username).exists()
     page = member_client.get("/account/identities").content.decode()
     assert "Kakao 로그인을 연결했습니다" in page
+
+
+def test_a_member_links_github_and_sees_it_in_the_account_page(
+    member_client: Client, fake_providers: FakeProviders, member: User
+) -> None:
+    page = member_client.get("/account").content.decode()
+    assert 'action="/account/identities/link/github"' in page
+    response = link(member_client, fake_providers, "github")
+    assert response.status_code == 302 and response["Location"] == "/account"
+    page = member_client.get("/account").content.decode()
+    assert "GitHub 로그인을 연결했습니다" in page
+    assert '<span class="sc-list-title">GitHub</span>' in page
+    assert 'action="/account/identities/link/github"' not in page
 
 
 def test_linking_a_login_of_another_account_is_refused(
@@ -503,6 +634,30 @@ def test_a_member_with_two_logins_unlinks_one(
     assert list(member.identities.values_list("provider", flat=True)) == ["kakao"]
     event = AuditEvent.objects.get(kind=audit.IDENTITY_UNLINKED)
     assert event.detail == {"provider": "google"}
+
+
+def test_a_kakao_member_links_github_signs_in_with_it_and_unlinks_it(
+    client: Client, fake_providers: FakeProviders, next_url: str, frozen_clock: FrozenClock
+) -> None:
+    kakao_member = make_member("kakao", "4123456789", email="", name="카카오회원")
+    client.force_login(kakao_member)
+    assert link(client, fake_providers, "github", github_id=99).status_code == 302
+    assert sorted(kakao_member.identities.values_list("provider", flat=True)) == [
+        "github",
+        "kakao",
+    ]
+
+    client.logout()
+    response = github_login(client, fake_providers, next_url, github_answer(github_id=99))
+    assert response.status_code == 302 and response["Location"] == next_url
+    assert session_user(client) == kakao_member  # the same member, no new account
+    assert User.objects.filter(member__isnull=False).count() == 1
+
+    github = kakao_member.identities.get(provider="github")
+    assert client.post(f"/account/identities/{github.pk}/unlink").status_code == 302
+    assert list(kakao_member.identities.values_list("provider", flat=True)) == ["kakao"]
+    page = client.get("/account").content.decode()
+    assert 'action="/account/identities/link/github"' in page  # can be linked again
 
 
 def test_another_accounts_login_cannot_be_unlinked(member_client: Client, member: User) -> None:
