@@ -143,6 +143,7 @@ SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_FAILURE_VIEW = "accounts.views.csrf_failure"
 
 # Security headers (production = DJANGO_DEBUG not 1). NPMplus terminates TLS and redirects
 # http -> https, so SECURE_SSL_REDIRECT stays off: the compose/deploy health checks call
