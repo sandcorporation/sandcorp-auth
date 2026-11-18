@@ -1,8 +1,8 @@
 """Shared fixtures for backend HTTP-boundary tests.
 
 Fake adapters get registered here as they appear: `frozen_clock`, `recording_randomness`,
-`fake_http` (documents by URL, host addresses by name), `fake_providers` (autouse: Google and
-Kakao at the HTTP boundary, see `FakeProviders`).
+`fake_http` (documents by URL, host addresses by name), `fake_providers` (autouse: Google,
+Kakao and GitHub at the HTTP boundary, see `FakeProviders`).
 `signing_key` gives a test an active token signing key.
 `owner` is the owner account (before TOTP enrollment); `logged_in_client` is a test client that
 finished password + TOTP (Django `login()` done), with `frozen_clock` running.
@@ -303,18 +303,24 @@ PORTFOLIO = "https://sandcorp.co.kr/mcp"
 
 
 class FakeProviders:
-    """Stands in for Google and Kakao at the HTTP boundary (`adapters.social_http`), so the
+    """Stands in for Google, Kakao and GitHub at the HTTP boundary (`adapters.social_http`), so the
     real id_token checks run against tokens signed by a test RSA key.
 
     A test registers what the provider will say for a code: `google_codes[code] = claims`
     (signed with the test key; a `str` is sent as the id_token as it is) and
-    `kakao_codes[code] = user` (the `/v2/user/me` document). Codes are single use. `posted`
-    records every form post (url, data); anything else raises FetchError."""
+    `kakao_codes[code] = user` (the `/v2/user/me` document) and `github_codes[code] = answer`
+    (`{"user": <the /user document>, "emails": <the /user/emails list>}`; `"emails": "denied"`
+    answers 403, `{"token_error": …}` is GitHub's 200-with-error token answer). Codes are single
+    use. `posted` records every form post (url, data), `requested` every GET url (`get_headers`
+    its headers); anything else raises FetchError."""
 
     def __init__(self) -> None:
         self.google_codes: dict[str, dict[str, object] | str] = {}
         self.kakao_codes: dict[str, dict[str, object]] = {}
         self.kakao_tokens: dict[str, dict[str, object]] = {}
+        self.github_codes: dict[str, dict[str, object]] = {}
+        self.github_tokens: dict[str, dict[str, object]] = {}
+        self.get_headers: list[dict[str, str]] = []
         self.posted: list[tuple[str, dict[str, str]]] = []
         self.requested: list[str] = []
 
@@ -331,7 +337,7 @@ class FakeProviders:
         )
 
     def post_form(self, url: str, data: Mapping[str, str]) -> FetchedDocument:
-        from services.social_providers import GOOGLE_TOKEN_URL, KAKAO_TOKEN_URL
+        from services.social_providers import GITHUB_TOKEN_URL, GOOGLE_TOKEN_URL, KAKAO_TOKEN_URL
 
         self.posted.append((url, dict(data)))
         code = data.get("code", "")
@@ -348,12 +354,33 @@ class FakeProviders:
             access_token = f"kakao-at-{len(self.kakao_tokens)}"
             self.kakao_tokens[access_token] = user
             return self._json({"access_token": access_token, "token_type": "bearer"})
+        if url == GITHUB_TOKEN_URL:
+            answer = self.github_codes.pop(code, None)
+            if answer is None:  # GitHub answers 200 with an error object
+                return self._json({"error": "bad_verification_code"})
+            if "token_error" in answer:
+                return self._json({"error": answer["token_error"]})
+            access_token = f"gho_fake{len(self.github_tokens)}"
+            self.github_tokens[access_token] = answer
+            return self._json(
+                {
+                    "access_token": access_token,
+                    "token_type": "bearer",
+                    "scope": "read:user,user:email",
+                }
+            )
         raise FetchError(f"no fake provider at {url}")
 
     def get(self, url: str, *, headers: Mapping[str, str]) -> FetchedDocument:
-        from services.social_providers import GOOGLE_JWKS_URL, KAKAO_USER_URL
+        from services.social_providers import (
+            GITHUB_EMAILS_URL,
+            GITHUB_USER_URL,
+            GOOGLE_JWKS_URL,
+            KAKAO_USER_URL,
+        )
 
         self.requested.append(url)
+        self.get_headers.append(dict(headers))
         if url == GOOGLE_JWKS_URL:
             jwk = json.loads(RSAAlgorithm.to_jwk(_google_key().public_key()))
             return self._json({"keys": [{**jwk, "kid": GOOGLE_KID, "alg": "RS256", "use": "sig"}]})
@@ -362,6 +389,16 @@ class FakeProviders:
             if token not in self.kakao_tokens:
                 return self._json({"msg": "this access token does not exist", "code": -401}, 401)
             return self._json(self.kakao_tokens[token])
+        if url in (GITHUB_USER_URL, GITHUB_EMAILS_URL):
+            answer = self.github_tokens.get(
+                headers.get("Authorization", "").removeprefix("Bearer ")
+            )
+            if answer is None:
+                return self._json({"message": "Bad credentials"}, 401)
+            document = answer["user"] if url == GITHUB_USER_URL else answer["emails"]
+            if document == "denied":
+                return self._json({"message": "Resource not accessible by integration"}, 403)
+            return self._json(document)
         raise FetchError(f"no fake provider at {url}")
 
 
@@ -378,7 +415,7 @@ def _google_key() -> RSAPrivateKey:
 
 @pytest.fixture(autouse=True)
 def fake_providers() -> Iterator[FakeProviders]:
-    """Every test talks to fake Google/Kakao (never the real ones)."""
+    """Every test talks to fake Google/Kakao/GitHub (never the real ones)."""
     fake = FakeProviders()
     previous = set_provider_http(fake)
     yield fake

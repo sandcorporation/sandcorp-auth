@@ -48,13 +48,14 @@ class Member(models.Model):
 
 
 class ExternalIdentity(models.Model):
-    """A social login account (Google, Kakao) linked to a Sandcorp account. (provider,
+    """A social login account (Google, Kakao, GitHub) linked to a Sandcorp account. (provider,
     provider_sub) belongs to one account only; an account may have several identities. What
     the provider said at link time is kept as it said it; nothing is merged automatically."""
 
     class Provider(models.TextChoices):
         GOOGLE = "google", "Google"
         KAKAO = "kakao", "Kakao"
+        GITHUB = "github", "GitHub"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="identities"

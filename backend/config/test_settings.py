@@ -16,6 +16,8 @@ os.environ.setdefault("GOOGLE_CLIENT_ID", "test-google-client.apps.googleusercon
 os.environ.setdefault("GOOGLE_CLIENT_SECRET", "test-google-secret")
 os.environ.setdefault("KAKAO_CLIENT_ID", "test-kakao-rest-api-key")
 os.environ.setdefault("KAKAO_CLIENT_SECRET", "test-kakao-secret")
+os.environ.setdefault("GITHUB_CLIENT_ID", "test-github-client-id")
+os.environ.setdefault("GITHUB_CLIENT_SECRET", "test-github-secret")
 
 from config.settings import *  # noqa: E402, F403
 
