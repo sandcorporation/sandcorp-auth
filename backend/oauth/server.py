@@ -125,9 +125,11 @@ class SandcorpAuthorizationServer(AuthorizationServer):  # type: ignore[misc]  #
         resource: Resource | None = None,
         auth_time: datetime | None = None,
         nonce: str | None = None,
+        via_social: bool = False,
     ) -> TokenResponse:
         """authlib's signature plus `resource`, the access token's audience (RFC 8707), and
-        the ID token's `auth_time` and `nonce` (used only with the `openid` scope)."""
+        the ID token's `auth_time` and `nonce` (used only with the `openid` scope), and
+        `via_social` (the owner's social login session, #100)."""
         return self.token_generator.generate(
             grant_type,
             client,
@@ -138,6 +140,7 @@ class SandcorpAuthorizationServer(AuthorizationServer):  # type: ignore[misc]  #
             resource=resource,
             auth_time=auth_time,
             nonce=nonce,
+            via_social=via_social,
         )
 
     def save_token(self, token: TokenResponse, request: OAuth2Request) -> RefreshToken | None:
@@ -151,17 +154,19 @@ class SandcorpAuthorizationServer(AuthorizationServer):  # type: ignore[misc]  #
             kind = audit.TOKEN_REFRESHED
             refresh_scope = presented.scope
             auth_time = presented.auth_time
+            via_social = presented.via_social
         else:
             code: AuthorizationCode = request.authorization_code
             family = live_family(code.consent)
             kind = audit.TOKEN_ISSUED
             refresh_scope = token["scope"]
             auth_time = code.auth_time
+            via_social = code.via_social
         jti = access_token_jti(token["access_token"])
         stored = None
         if "refresh_token" in token:
             stored = store_refresh_token(
-                family, token["refresh_token"], refresh_scope, jti, auth_time
+                family, token["refresh_token"], refresh_scope, jti, auth_time, via_social
             )
         client: Client = request.client
         audit.record(

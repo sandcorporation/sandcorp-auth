@@ -27,6 +27,7 @@
   {% endif %}
 </section>
 
+{% if not is_owner %}
 <section class="auth-section" data-slot="email">
   <h2>이메일</h2>
   <form method="post" action="/account/email">
@@ -62,6 +63,7 @@
   <p class="auth-meta-text">탈퇴하면 이 계정으로는 더 로그인할 수 없고, 연결된 앱에도 탈퇴를 알립니다. 되돌릴 수 없습니다.</p>
   <a class="sc-btn sc-btn--secondary auth-subtle" href="/account/withdraw">탈퇴하기</a>
 </section>
+{% endif %}
 
 <form method="post" action="/logout" class="auth-section">{% csrf_token %}<button type="submit" class="auth-link-button">로그아웃</button></form>
 {% endblock %}

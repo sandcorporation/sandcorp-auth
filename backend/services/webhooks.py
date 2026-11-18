@@ -1,5 +1,6 @@
-"""Outgoing webhooks (#39, ADR 0004): today one event, `user.deleted`, sent to the clients a
-withdrawn member had consented to.
+"""Outgoing webhooks (#39, ADR 0004): `user.deleted`, sent to the clients a withdrawn member had
+consented to, and `user.merged` (#100), sent to the clients a member merged into the owner had
+consented to (the member's data moves to `to_sub`; nothing is to be deleted).
 
 - A client has a webhook URL and a secret (`set_webhook`). The secret is shown once and stored
   encrypted with SIGNING_KEY_ENCRYPTION_KEY: HMAC needs the secret itself.
@@ -34,6 +35,7 @@ from services.crypto import decrypt_secret, encrypt_secret
 from services.members import new_ulid
 
 USER_DELETED: Final = "user.deleted"
+USER_MERGED: Final = "user.merged"
 SIGNATURE_HEADER: Final = "X-Sandcorp-Signature"
 EVENT_HEADER: Final = "X-Sandcorp-Event"
 DELIVERY_HEADER: Final = "X-Sandcorp-Delivery"
@@ -112,25 +114,28 @@ def sign(secret: str, timestamp: int, body: bytes) -> str:
 def enqueue_user_deleted(sub: str, occurred_at: datetime, clients: list[Client]) -> int:
     """Queue `user.deleted` for `sub` to each client that has a webhook. Call it inside the
     withdrawal's transaction. Returns how many were queued."""
+    when = occurred_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _enqueue(USER_DELETED, {"sub": sub, "occurred_at": when}, clients)
+
+
+def enqueue_user_merged(from_sub: str, to_sub: str, clients: list[Client]) -> int:
+    """Queue `user.merged` (`{"id", "type", "from_sub", "to_sub"}`, #100) to each client that
+    has a webhook. Call it inside the merge's transaction. Returns how many were queued."""
+    return _enqueue(USER_MERGED, {"from_sub": from_sub, "to_sub": to_sub}, clients)
+
+
+def _enqueue(event_type: str, fields: dict[str, str], clients: list[Client]) -> int:
     now = get_clock().now()
     queued = 0
     for client in clients:
         if not client.webhook_url or client.webhook_secret_encrypted is None:
             continue
         event_id = new_ulid()
-        body = json.dumps(
-            {
-                "id": event_id,
-                "type": USER_DELETED,
-                "sub": sub,
-                "occurred_at": occurred_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            },
-            separators=(",", ":"),
-        )
+        body = json.dumps({"id": event_id, "type": event_type, **fields}, separators=(",", ":"))
         WebhookDelivery.objects.create(
             event_id=event_id,
             client=client,
-            event_type=USER_DELETED,
+            event_type=event_type,
             body=body,
             created_at=now,
             next_attempt_at=now,

@@ -16,13 +16,15 @@ def issue_access_token(
     client_id: str,
     scopes: Sequence[str],
     acct: str | None = None,
+    amr: Sequence[str] | None = None,
 ) -> str:
     """Sign an access token with the active key. Raises NoActiveSigningKey if there is none.
     `acct` (the account kind claim, ADR 0003) is given for members and machine clients (#76)
-    only: the owner's tokens keep exactly the claims of §2."""
+    only: the owner's tokens keep exactly the claims of §2. `amr` (RFC 8176) is given only for
+    the owner's social login session (#100): `["fed"]`."""
     key = active_signing_key()
     iat = int(get_clock().now().timestamp())
-    claims: dict[str, str | int] = {
+    claims: dict[str, str | int | list[str]] = {
         "iss": settings.SITE_URL,
         "sub": sub,
         "aud": audience,
@@ -34,6 +36,8 @@ def issue_access_token(
     }
     if acct is not None:
         claims["acct"] = acct
+    if amr is not None:
+        claims["amr"] = list(amr)
     return jwt.encode(
         claims, key.private_key, algorithm=ALGORITHM, headers={"kid": key.kid, "typ": "JWT"}
     )

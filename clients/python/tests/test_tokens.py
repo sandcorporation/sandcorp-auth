@@ -293,6 +293,33 @@ def test_member_token_passes_the_account_rules(
     assert (passed.sub, passed.acct, passed.scopes) == (MEMBER, "member", frozenset({"login"}))
 
 
+def test_owner_only_rejects_the_owners_social_login_token(
+    key: SigningKey, jwks: JwksCache, clock: FrozenClock
+) -> None:
+    token = sign(key, claims_at(clock, amr=["fed"]))
+    with pytest.raises(TokenRejected):
+        check(token, jwks, clock, hook=owner_only(OWNER))
+
+
+def test_owner_or_member_keeps_the_social_login_mark(
+    key: SigningKey, jwks: JwksCache, clock: FrozenClock
+) -> None:
+    social = check(
+        sign(key, claims_at(clock, amr=["fed"])), jwks, clock, hook=owner_or_member(OWNER)
+    )
+    assert (social.sub, social.acct, social.via_social) == (OWNER, None, True)
+    strong = check(sign(key, claims_at(clock)), jwks, clock, hook=owner_or_member(OWNER))
+    assert strong.via_social is False
+
+
+@pytest.mark.parametrize("amr", ["fed", [1], {"fed": True}])
+def test_amr_of_the_wrong_shape_is_rejected(
+    amr: object, key: SigningKey, jwks: JwksCache, clock: FrozenClock
+) -> None:
+    with pytest.raises(TokenRejected):
+        check(sign(key, claims_at(clock, amr=amr)), jwks, clock, hook=owner_or_member(OWNER))
+
+
 def test_owner_passes_owner_or_member(key: SigningKey, jwks: JwksCache, clock: FrozenClock) -> None:
     assert check(sign(key, claims_at(clock)), jwks, clock, hook=owner_or_member(OWNER)).sub == OWNER
 

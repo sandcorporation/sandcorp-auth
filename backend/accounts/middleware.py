@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import logout
@@ -9,6 +10,7 @@ from django.urls import reverse
 
 from accounts.session import pending_user
 from services.members import is_member
+from services.step_up import is_weak_owner_session
 from services.totp import is_enrolled
 
 
@@ -35,4 +37,20 @@ class TotpEnrollmentMiddleware:
             allowed = {reverse("accounts:totp_setup"), reverse("accounts:logout")}
             if request.path not in allowed and not request.path.startswith(settings.STATIC_URL):
                 return redirect("accounts:totp_setup")
+        return self.get_response(request)
+
+
+class OwnerStepUpMiddleware:
+    """The admin screens need a recent password + TOTP (#100). The owner signed in with a social
+    login is sent to the password + TOTP screen first and comes back afterwards. Anyone else
+    (a member, nobody) goes on to the admin's own refusal (`admin_login_redirect`, #95)."""
+
+    def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
+        self.get_response = get_response
+
+    def __call__(self, request: HttpRequest) -> HttpResponse:
+        admin_path = "/" + settings.ADMIN_PATH
+        if request.path.startswith(admin_path) and is_weak_owner_session(request):
+            target = request.get_full_path() if request.method == "GET" else admin_path
+            return redirect("/login?" + urlencode({"next": target}))
         return self.get_response(request)

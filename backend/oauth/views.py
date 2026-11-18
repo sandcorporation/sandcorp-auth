@@ -26,6 +26,7 @@ from services.oidc import (
     verify_userinfo_token,
 )
 from services.signing import published_jwks
+from services.step_up import is_weak_owner_session, member_level
 
 
 @require_GET
@@ -146,6 +147,12 @@ def authorize(request: HttpRequest) -> HttpResponse:
         # A member must agree to the current terms first (#37); the screen comes back here.
         return redirect("/terms?" + urlencode({"next": request.get_full_path()}))
     client: Client = grant.request.client
+    if is_weak_owner_session(request):
+        # The owner signed in with a social login (#100): only what a member could get.
+        # Anything more needs password + TOTP first; the login comes back here.
+        if not member_level(client, grant.scopes, grant.resource):
+            return redirect("/login?" + urlencode({"next": request.get_full_path()}))
+        grant.via_social = True
     consent = live_consent(user, client, grant.resource)
     ip = client_ip(request)
     if request.method == "GET":

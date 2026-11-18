@@ -1,6 +1,6 @@
 [project]
 name = "sandcorp-authkit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Resource-server side of Sandcorp auth: token validation, RFC 9728 metadata, Django bearer and operator login"
 readme = "README.md"
 requires-python = ">=3.14"

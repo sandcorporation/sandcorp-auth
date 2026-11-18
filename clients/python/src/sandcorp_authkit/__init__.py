@@ -3,4 +3,4 @@ cache), `resource` (RFC 9728 metadata, WWW-Authenticate), `login` (operator logi
 `testing` (fakes for the sites' suites) and `django` (bearer auth for Django and
 django-ninja; needs the `[django]` extra). See README.md."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

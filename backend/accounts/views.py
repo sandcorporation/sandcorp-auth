@@ -25,6 +25,7 @@ from services.login import (
     login_failed,
     login_succeeded,
 )
+from services.step_up import is_weak_owner_session, mark_strong
 from services.totp import enrollment_device, is_enrolled, provisioning_uri, qr_svg, secret_of
 
 BACKEND = "django.contrib.auth.backends.ModelBackend"
@@ -39,6 +40,7 @@ def _finish(request: HttpRequest, user: User, *, enrolled_now: bool = False) -> 
     login_succeeded(user, client_ip(request), enrolled_now=enrolled_now)
     target = request.session.get(NEXT_KEY)
     login(request, user, backend=BACKEND)
+    mark_strong(request)  # password + TOTP: the admin and owner-only grants open (#100)
     request.session.pop(PENDING_USER_KEY, None)
     request.session.pop(NEXT_KEY, None)
     return redirect(target if isinstance(target, str) else "accounts:home")
@@ -47,8 +49,14 @@ def _finish(request: HttpRequest, user: User, *, enrolled_now: bool = False) -> 
 @require_http_methods(["GET", "POST"])
 def login_view(request: HttpRequest) -> HttpResponse:
     next_url = safe_next(request, request.POST.get("next") or request.GET.get("next"))
-    if request.user.is_authenticated and request.method == "GET":
+    # A social login session of the owner stays here: password + TOTP again (step-up, #100).
+    if (
+        request.user.is_authenticated
+        and request.method == "GET"
+        and not is_weak_owner_session(request)
+    ):
         return redirect(next_url or "accounts:home")
+    step_up = is_weak_owner_session(request)
     error = None
     username = ""
     if request.method == "POST":
@@ -71,7 +79,8 @@ def login_view(request: HttpRequest) -> HttpResponse:
         "error": error,
         "username": username,
         "next": next_url or "",
-        "social": social_buttons(next_url),
+        "step_up": step_up,
+        "social": [] if step_up else social_buttons(next_url),
     }
     return render(request, "accounts/login.html", context)
 

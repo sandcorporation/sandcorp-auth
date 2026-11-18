@@ -12,8 +12,10 @@ live here.
   「동의 대기」 until the terms ticket, #37) unless its verified email already belongs to another
   member: then nothing is made and the caller shows 「이전에 <제공자>로 가입하셨습니다」 first;
   only `force_new=True` (the person chose 「그래도 새 계정」) makes the account. Nothing is merged.
-- `link_identity` / `unlink_identity` (members only): an identity that belongs to another
-  account is refused, and the last identity of an account cannot be removed.
+- `link_identity` / `unlink_identity` (members and the owner, #100): an identity that belongs
+  to another account is refused, and the last identity of a member cannot be removed (the
+  owner keeps its password + TOTP, so it may remove all). The owner's views ask for a recent
+  password + TOTP first (`services.step_up`).
 - Social buttons show only where `social_login_allowed(next)`: the login is for an
   `/authorize` request of a client that allows members (spec 7).
 """
@@ -255,10 +257,15 @@ def sign_in(profile: ExternalProfile, *, ip: str, force_new: bool = False) -> Si
     return SignInResult(user=user, created=created)
 
 
+def may_link(user: User) -> bool:
+    """Members and the owner (#100) have social logins; nobody else does."""
+    return is_member(user) or (user.is_superuser and user.is_active)
+
+
 def link_identity(user: User, profile: ExternalProfile, *, ip: str) -> bool:
-    """Link `profile` to the member `user`. True if newly linked, False if it already was.
-    Raises NotAMember, IdentityTaken (it belongs to another account)."""
-    if not is_member(user):
+    """Link `profile` to the member or the owner `user`. True if newly linked, False if it
+    already was. Raises NotAMember, IdentityTaken (it belongs to another account)."""
+    if not may_link(user):
         raise NotAMember(user.get_username())
     owner = identity_owner(profile)
     if owner is not None:
@@ -293,18 +300,19 @@ def link_identity(user: User, profile: ExternalProfile, *, ip: str) -> bool:
 
 
 def unlink_identity(user: User, identity_id: int, *, ip: str) -> None:
-    """Remove one of the member's social logins. Raises NotAMember, IdentityNotFound,
-    LastIdentity. The account row is locked so two removals at once cannot both pass the
-    "not the last one" check."""
-    if not is_member(user):
+    """Remove one of the account's social logins. Raises NotAMember, IdentityNotFound,
+    LastIdentity (members only: the owner signs in with its password + TOTP). The account row
+    is locked so two removals at once cannot both pass the "not the last one" check."""
+    if not may_link(user):
         raise NotAMember(user.get_username())
+    member = is_member(user)
     with transaction.atomic():
         User.objects.select_for_update().filter(pk=user.pk).first()
         identities = list(ExternalIdentity.objects.filter(user_id=user.pk))
         target = next((i for i in identities if i.pk == identity_id), None)
         if target is None:
             raise IdentityNotFound(str(identity_id))
-        if len(identities) <= 1:
+        if member and len(identities) <= 1:
             raise LastIdentity(user.get_username())
         target.delete()
     audit.record(

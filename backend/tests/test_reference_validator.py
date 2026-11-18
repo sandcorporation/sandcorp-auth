@@ -193,6 +193,32 @@ def test_subject_other_than_the_owner_is_rejected(
         validate(signer.token(sub="someone-else"), cache, frozen_clock)
 
 
+def test_owner_social_login_token_is_rejected_by_owner_only_sites(
+    signer: Signer, cache: JwksCache, frozen_clock: FrozenClock
+) -> None:
+    """T12 (#100): `amr` with "fed" is the owner's social login session."""
+    with pytest.raises(TokenRejected):
+        validate(signer.token(amr=["fed"]), cache, frozen_clock)
+    with pytest.raises(TokenRejected):
+        validate(signer.token(amr="fed"), cache, frozen_clock)
+    assert validate(signer.token(amr=["pwd"]), cache, frozen_clock).via_social is False
+
+
+def test_owner_social_login_token_is_marked_on_sites_that_take_members(
+    signer: Signer, cache: JwksCache, frozen_clock: FrozenClock
+) -> None:
+    """§10 A4 (#100): it passes as the owner, with `via_social` set."""
+    token = validate_account_access_token(
+        signer.token(amr=["fed"]),
+        jwks=cache,
+        audience=NEWS,
+        owner_sub=OWNER,
+        required_scope="admin",
+        clock=frozen_clock,
+    )
+    assert (token.acct, token.via_social) == ("owner", True)
+
+
 def test_missing_scope_is_forbidden_not_unauthorized(
     signer: Signer, cache: JwksCache, frozen_clock: FrozenClock
 ) -> None:

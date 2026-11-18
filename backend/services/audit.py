@@ -47,6 +47,7 @@ TERMS_AGREED: Final = "terms.agreed"
 CLIENT_WEBHOOK_CHANGED: Final = "client.webhook_changed"
 MEMBER_WITHDRAWN: Final = "member.withdrawn"
 MEMBER_PURGED: Final = "member.purged"
+MEMBER_MERGED: Final = "member.merged"
 
 SECRET_KEYS: Final = frozenset({"password", "code", "token", "secret", "otp"})
 

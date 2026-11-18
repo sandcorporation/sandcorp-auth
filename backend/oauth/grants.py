@@ -69,6 +69,7 @@ from services.members import (
 )
 from services.oidc import LOGIN_INFO_SCOPES, OPENID, USERINFO_RESOURCE
 from services.signing import random_token
+from services.step_up import member_level
 
 type Headers = list[tuple[str, str]]
 
@@ -164,6 +165,14 @@ def member_token(user: User, client: Client, scopes: list[str], resource: Resour
         raise InvalidGrantError("This grant is not available to member accounts here.") from None
 
 
+def social_token(via_social: bool, client: Client, scopes: list[str], resource: Resource) -> None:
+    """/token for a code or refresh token from the owner's social login session (#100): still
+    only a member-level grant (the client's mark may have been turned off since); else
+    `invalid_grant`."""
+    if via_social and not member_level(client, scopes, resource):
+        raise InvalidGrantError("This grant needs a password + TOTP sign-in.")
+
+
 def live_consent(user: User, client: Client, resource: Resource) -> Consent | None:
     return Consent.objects.filter(
         user=user, client=client, resource=resource, revoked_at__isnull=True
@@ -202,6 +211,8 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
     scopes: list[str]
     # Set by save_authorization_code (for the view's audit record).
     issued: AuthorizationCode | None = None
+    # Set by the view for the owner's social login session (#100, `services.step_up`).
+    via_social: bool = False
 
     def validate_authorization_request(self) -> str:
         redirect_uri: str = super().validate_authorization_request()
@@ -241,6 +252,7 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
             code_challenge_method=request.payload.data["code_challenge_method"],
             nonce=str(request.payload.data.get("nonce") or ""),
             auth_time=user.last_login or now,
+            via_social=self.via_social,
             created_at=now,
         )
         return self.issued
@@ -261,6 +273,7 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
         if values and values != [code.resource.url]:
             raise InvalidTargetError("'resource' is not the resource of the authorization code.")
         member_token(code.user, self.request.client, code.scope.split(), code.resource)
+        social_token(code.via_social, self.request.client, code.scope.split(), code.resource)
 
     def create_token_response(self) -> tuple[int, TokenResponse, Headers]:
         code: AuthorizationCode = self.request.authorization_code
@@ -294,6 +307,7 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
             resource=code.resource,  # the access token's `aud`
             auth_time=code.auth_time,
             nonce=code.nonce or None,
+            via_social=code.via_social,
         )
         return token
 
@@ -328,6 +342,7 @@ class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no 
         if values and values != [token.family.resource.url]:
             raise InvalidTargetError("'resource' is not the resource of the refresh token.")
         member_token(token.family.user, client, token.scope.split(), token.family.resource)
+        social_token(token.via_social, client, token.scope.split(), token.family.resource)
 
     def authenticate_refresh_token(self, refresh_token: str) -> RefreshToken | None:
         client: Client = self.request.client
@@ -396,6 +411,7 @@ class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no 
             include_refresh_token=include_refresh_token,
             resource=token.family.resource,  # the access token's `aud`, always the family's
             auth_time=token.auth_time,  # OpenID Connect Core 12.2: the original login; no nonce
+            via_social=token.via_social,
         )
         if "refresh_token" in generated:
             generated["refresh_token"] = successor_refresh_token(self.request.form["refresh_token"])
