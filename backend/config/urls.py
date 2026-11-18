@@ -5,6 +5,8 @@ from django.urls import include, path
 from accounts.views import admin_login_redirect
 from core.api import api
 
+handler403 = "accounts.views.forbidden"
+
 urlpatterns = [
     # Before admin.site.urls so it shadows the admin's own login screen.
     path(settings.ADMIN_PATH + "login/", admin_login_redirect),

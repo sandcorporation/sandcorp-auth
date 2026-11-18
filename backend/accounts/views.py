@@ -7,12 +7,12 @@ from django.conf import settings
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
-from django.core.exceptions import PermissionDenied
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.utils.safestring import mark_safe
 from django.views.decorators.http import require_http_methods, require_POST
 
+from accounts.models import ExternalIdentity
 from accounts.session import NEXT_KEY, PENDING_USER_KEY, pending_user, safe_next
 from accounts.social_views import social_buttons
 from core.http import client_ip
@@ -145,8 +145,28 @@ def home_view(request: HttpRequest) -> HttpResponse:
 
 def admin_login_redirect(request: HttpRequest) -> HttpResponse:
     """Replaces the Django admin login screen with this service's login. A signed-in member
-    is not staff: 403 here, or /login would send it straight back (a redirect loop)."""
+    is not staff: /login would send it straight back (a redirect loop), so show a 403 page whose
+    button ends the member session and goes to /login (#95)."""
+    admin_path = "/" + settings.ADMIN_PATH
     if request.user.is_authenticated:
-        raise PermissionDenied("the admin is for the owner only")
-    next_url = safe_next(request, request.GET.get("next")) or "/" + settings.ADMIN_PATH
+        user = request.user
+        who = ""
+        if isinstance(user, User):
+            identity = user.identities.order_by("id").first()
+            who = user.email or (
+                ExternalIdentity.Provider(identity.provider).label if identity else ""
+            )
+        context = {"who": who, "relogin_next": "/login?" + urlencode({"next": admin_path})}
+        return render(request, "accounts/admin_forbidden.html", context, status=403)
+    next_url = safe_next(request, request.GET.get("next")) or admin_path
     return redirect("/login?" + urlencode({"next": next_url}))
+
+
+def csrf_failure(request: HttpRequest, reason: str = "") -> HttpResponse:
+    """`CSRF_FAILURE_VIEW`: a page-expired screen; retry is a plain GET of the same path."""
+    return render(request, "accounts/csrf_failed.html", {"retry": request.path}, status=403)
+
+
+def forbidden(request: HttpRequest, exception: Exception | None = None) -> HttpResponse:
+    """`handler403`: no bare "Forbidden" (an owner on a member-only screen, etc.)."""
+    return render(request, "accounts/forbidden.html", status=403)
