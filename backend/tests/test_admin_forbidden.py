@@ -16,7 +16,6 @@ def test_member_session_gets_relogin_page(client: Client, db: None) -> None:
     assert response.status_code == 403
     html = response.content.decode()
     assert "관리자 계정으로 다시 로그인" in html
-    assert MEMBER_EMAIL in html
     assert 'action="/logout"' in html
 
 
@@ -49,3 +48,27 @@ def test_owner_on_member_screen_gets_page_not_bare_403(logged_in_client: Client)
     response = logged_in_client.get("/account")
     assert response.status_code == 403
     assert "이 화면은 열 수 없습니다" in response.content.decode()
+
+
+def test_staff_on_admin_login_goes_to_admin(logged_in_client: Client) -> None:
+    response = logged_in_client.get(ADMIN_LOGIN)
+    assert response.status_code == 302
+    assert response["Location"] == ADMIN
+
+
+def test_csrf_retry_link_never_protocol_relative() -> None:
+    from django.test import RequestFactory
+
+    from accounts.views import csrf_failure
+
+    for path in ("//evil.example/x", "/\\evil.example"):
+        html = csrf_failure(RequestFactory().post(path)).content.decode()
+        assert 'href="/"' in html
+    assert 'href="/logout"' in csrf_failure(RequestFactory().post("/logout")).content.decode()
+
+
+def test_relogin_page_masks_email(client: Client, db: None) -> None:
+    client.force_login(make_member())
+    html = client.get(ADMIN_LOGIN).content.decode()
+    assert MEMBER_EMAIL not in html
+    assert MEMBER_EMAIL[:2] + "***@" + MEMBER_EMAIL.split("@")[1] in html
