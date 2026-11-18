@@ -1,0 +1,10 @@
+{% extends "accounts/base.html" %}
+{% block title %}관리자 계정이 아님{% endblock %}
+{% block content %}
+<h1>관리자 계정이 아닙니다</h1>
+<dl class="auth-signed-in" data-slot="signed-in-as">
+  {% if signed_in_as.providers %}<div><dt>로그인 수단</dt><dd>{{ signed_in_as.providers }}</dd></div>{% endif %}
+  {% if signed_in_as.email %}<div><dt>이메일</dt><dd>{{ signed_in_as.email }}</dd></div>{% endif %}
+</dl>
+<form method="post">{% csrf_token %}<button class="sc-btn sc-btn--accent sc-btn--block" type="submit">관리자 계정으로 다시 로그인</button></form>
+{% endblock %}

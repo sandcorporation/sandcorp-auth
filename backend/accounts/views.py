@@ -7,12 +7,12 @@ from django.conf import settings
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
-from django.core.exceptions import PermissionDenied
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.utils.safestring import mark_safe
 from django.views.decorators.http import require_http_methods, require_POST
 
+from accounts.models import ExternalIdentity
 from accounts.session import NEXT_KEY, PENDING_USER_KEY, pending_user, safe_next
 from accounts.social_views import social_buttons
 from core.http import client_ip
@@ -143,10 +143,59 @@ def home_view(request: HttpRequest) -> HttpResponse:
     return render(request, "accounts/home.html", {"admin_path": "/" + settings.ADMIN_PATH})
 
 
+def _masked_email(email: str) -> str:
+    """「me****@example.com」: enough to tell which account this is, not the whole address
+    (the screen sits on the admin path, so it shows as little personal data as it can)."""
+    local, at, domain = email.partition("@")
+    if not at or not local:
+        return ""
+    keep = 1 if len(local) <= 3 else 2
+    return local[:keep] + "*" * (len(local) - keep) + "@" + domain
+
+
+def _signed_in_as(user: User) -> dict[str, str]:
+    providers = (
+        ExternalIdentity.objects.filter(user_id=user.pk)
+        .order_by("linked_at", "pk")
+        .values_list("provider", flat=True)
+    )
+    labels = " · ".join(ExternalIdentity.Provider(p).label for p in dict.fromkeys(providers))
+    return {"providers": labels, "email": _masked_email(user.email)}
+
+
+@require_http_methods(["GET", "POST"])
 def admin_login_redirect(request: HttpRequest) -> HttpResponse:
-    """Replaces the Django admin login screen with this service's login. A signed-in member
-    is not staff: 403 here, or /login would send it straight back (a redirect loop)."""
-    if request.user.is_authenticated:
-        raise PermissionDenied("the admin is for the owner only")
-    next_url = safe_next(request, request.GET.get("next")) or "/" + settings.ADMIN_PATH
+    """Replaces the Django admin login screen with this service's login. A signed-in member is
+    not staff and /login would send it straight back (a redirect loop), so it gets a 403 screen
+    whose button (POST) ends the member session and goes to /login?next=<admin> — `next` is
+    always the admin path here, never taken from the request."""
+    admin_url = "/" + settings.ADMIN_PATH
+    user = request.user
+    if isinstance(user, User) and user.is_staff:
+        return redirect(admin_url)
+    if request.method == "POST":
+        if isinstance(user, User):
+            audit.record(audit.LOGOUT, actor=user.get_username(), ip=client_ip(request))
+        logout(request)
+        return redirect("/login?" + urlencode({"next": admin_url}))
+    if isinstance(user, User):
+        context = {"signed_in_as": _signed_in_as(user)}
+        return render(request, "accounts/admin_member_session.html", context, status=403)
+    next_url = safe_next(request, request.GET.get("next")) or admin_url
     return redirect("/login?" + urlencode({"next": next_url}))
+
+
+def _retry_path(request: HttpRequest) -> str:
+    path = request.path
+    if not path.startswith("/") or path.startswith(("//", "/\\")):
+        return "/"
+    query = request.META.get("QUERY_STRING", "")
+    return path + ("?" + query if query else "")
+
+
+def csrf_failure(request: HttpRequest, reason: str = "") -> HttpResponse:
+    """`CSRF_FAILURE_VIEW`: an expired form (cookie gone, Referer mismatch) gets a 403 screen
+    with a link to GET the same address again instead of Django's bare page."""
+    return render(
+        request, "accounts/csrf_failure.html", {"retry_url": _retry_path(request)}, status=403
+    )
