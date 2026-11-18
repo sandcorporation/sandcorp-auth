@@ -57,6 +57,7 @@ def test_metadata_declares_endpoints_features_and_cimd(client: Client) -> None:
             "iat",
             "auth_time",
             "nonce",
+            "amr",
             "name",
             "preferred_username",
             "email",
