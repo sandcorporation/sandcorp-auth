@@ -143,6 +143,14 @@ def home_view(request: HttpRequest) -> HttpResponse:
     return render(request, "accounts/home.html", {"admin_path": "/" + settings.ADMIN_PATH})
 
 
+def _mask_email(email: str) -> str:
+    """`ab***@example.com`: keep the first two characters of the local part."""
+    local, at, domain = email.partition("@")
+    if not at:
+        return ""
+    return local[:2] + "***" + at + domain
+
+
 def admin_login_redirect(request: HttpRequest) -> HttpResponse:
     """Replaces the Django admin login screen with this service's login. A signed-in member
     is not staff: /login would send it straight back (a redirect loop), so show a 403 page whose
@@ -150,10 +158,12 @@ def admin_login_redirect(request: HttpRequest) -> HttpResponse:
     admin_path = "/" + settings.ADMIN_PATH
     if request.user.is_authenticated:
         user = request.user
+        if user.is_staff:
+            return redirect(admin_path)
         who = ""
         if isinstance(user, User):
             identity = user.identities.order_by("id").first()
-            who = user.email or (
+            who = _mask_email(user.email) or (
                 ExternalIdentity.Provider(identity.provider).label if identity else ""
             )
         context = {"who": who, "relogin_next": "/login?" + urlencode({"next": admin_path})}
@@ -164,7 +174,9 @@ def admin_login_redirect(request: HttpRequest) -> HttpResponse:
 
 def csrf_failure(request: HttpRequest, reason: str = "") -> HttpResponse:
     """`CSRF_FAILURE_VIEW`: a page-expired screen; retry is a plain GET of the same path."""
-    return render(request, "accounts/csrf_failed.html", {"retry": request.path}, status=403)
+    path = request.path
+    retry = path if path.startswith("/") and not path.startswith(("//", "/\\")) else "/"
+    return render(request, "accounts/csrf_failed.html", {"retry": retry}, status=403)
 
 
 def forbidden(request: HttpRequest, exception: Exception | None = None) -> HttpResponse:
