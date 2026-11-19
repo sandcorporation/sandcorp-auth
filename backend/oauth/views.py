@@ -133,8 +133,9 @@ def authorize(request: HttpRequest) -> HttpResponse:
     """The authorization endpoint (RFC 6749 4.1 with PKCE S256 and RFC 8707 `resource`).
 
     GET validates the request and either issues a code at once (a live consent already covers
-    the scopes) or shows the consent screen. POST is the owner's answer from that screen
-    (`decision=allow|deny`), validated again from the same query string.
+    the scopes, and the client is not a login info public client) or shows the consent screen.
+    POST is the owner's answer from that screen (`decision=allow|deny`), validated again from
+    the same query string.
     """
     user = request.user
     if not isinstance(user, User) or not user.is_authenticated:
@@ -156,7 +157,10 @@ def authorize(request: HttpRequest) -> HttpResponse:
     consent = live_consent(user, client, grant.resource)
     ip = client_ip(request)
     if request.method == "GET":
-        if consent is not None and consent.covers(grant.scopes):
+        # A login info public client (ADR 0007) is only a program on someone's PC: another
+        # program there can send its client_id, so the owner always clicks (RFC 8252 §8.6).
+        remembered = consent is not None and consent.covers(grant.scopes)
+        if remembered and not client.public_login_info:
             return _issue_code(request, grant, user, ip)
         return _consent_screen(request, grant, consent)
 

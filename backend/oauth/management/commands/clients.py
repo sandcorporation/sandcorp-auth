@@ -10,6 +10,7 @@ from services.confidential_clients import (
 )
 from services.machine_clients import MachineClientError, create_machine_client
 from services.members import set_allows_members
+from services.public_clients import create_public_client
 from services.webhooks import InvalidWebhookUrl, set_webhook
 
 ACTOR = "manage.py clients"
@@ -18,6 +19,7 @@ ACTOR = "manage.py clients"
 class Command(BaseCommand):
     help = (
         "OAuth 클라이언트 관리: create-confidential(사이트 관리 화면 로그인용 기밀 클라이언트), "
+        "create-public(한 PC의 loopback에서 도는 프로그램용 공개 클라이언트, ADR 0007), "
         "create-machine(client_credentials로 토큰을 받는 기계 클라이언트), "
         "rotate-secret, members(일반 사용자 허용 켜기·끄기), "
         "webhook(user.deleted 웹훅 주소·서명 비밀), list. "
@@ -36,6 +38,29 @@ class Command(BaseCommand):
             help="https만, 정확 일치(끝 슬래시 포함). 여러 번 줄 수 있다",
         )
         create.add_argument(
+            "--allow-members",
+            action="store_true",
+            help="일반 사용자(소셜 로그인 계정)도 받는다. 기본은 대표만",
+        )
+        public = actions.add_parser(
+            "create-public",
+            help="공개 클라이언트를 만든다(PC의 loopback에서 도는 프로그램, 시크릿 없음·PKCE)",
+        )
+        public.add_argument("--name", required=True)
+        public.add_argument(
+            "--redirect-uri",
+            dest="redirect_uris",
+            action="append",
+            required=True,
+            help="http://127.0.0.1:<포트>/… 또는 http://[::1]:<포트>/…만, "
+            "포트까지 정확 일치. 여러 번 줄 수 있다",
+        )
+        public.add_argument(
+            "--login-info",
+            action="store_true",
+            help="openid·profile·email 스코프를 준다(로그인할 때마다 동의 화면). 기본은 끔",
+        )
+        public.add_argument(
             "--allow-members",
             action="store_true",
             help="일반 사용자(소셜 로그인 계정)도 받는다. 기본은 대표만",
@@ -95,6 +120,29 @@ class Command(BaseCommand):
             if options["allow_members"]:
                 set_allows_members(issued.client, True, actor=ACTOR)
             self._print_secret("기밀 클라이언트를 만들었습니다.", issued.client, issued.secret)
+        elif action == "create-public":
+            uris = options["redirect_uris"]
+            assert isinstance(uris, list)
+            try:
+                created = create_public_client(
+                    str(options["name"]),
+                    [str(uri) for uri in uris],
+                    login_info=bool(options["login_info"]),
+                    actor=ACTOR,
+                )
+            except (InvalidRedirectUri, ValueError) as error:
+                raise CommandError(str(error), returncode=1) from None
+            if options["allow_members"]:
+                set_allows_members(created, True, actor=ACTOR)
+            self.stdout.write(
+                "공개 클라이언트를 만들었습니다(시크릿 없음, PKCE S256, "
+                "token_endpoint_auth_method=none).\n"
+                f"name: {created.name}\n"
+                f"client_id: {created.client_id}\n"
+                f"redirect_uris: {' '.join(created.redirect_uris)}\n"
+                f"login_info: {'on' if created.allows_login_info else 'off'}\n"
+                f"allows_members: {'on' if created.allows_members else 'off'}"
+            )
         elif action == "create-machine":
             scopes = options["scopes"]
             assert isinstance(scopes, list)
@@ -150,6 +198,7 @@ class Command(BaseCommand):
                 self.stdout.write(
                     f"{client.client_id}\t{client.kind}\t{client.registered_via}\t{state}\t"
                     f"{client.name}\t{uris}\t{members}\twebhook={client.webhook_url or 'off'}"
+                    + ("\tlogin_info=on" if client.allows_login_info else "")
                 )
 
     def _webhook(self, options: dict[str, object]) -> None:

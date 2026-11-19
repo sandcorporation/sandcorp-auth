@@ -29,6 +29,7 @@ from services.confidential_clients import (
 )
 from services.consents import revoke_consent
 from services.members import record_members_changed, record_scope_members_changed
+from services.public_clients import public_redirect_uris
 from services.redirect_uris import valid_redirect_uri
 from services.webhooks import InvalidWebhookUrl, set_webhook
 
@@ -153,6 +154,12 @@ class ClientChangeForm(_ClientForm):
             if not isinstance(uri, str):
                 raise forms.ValidationError(f"리다이렉트 URI는 문자열이어야 합니다: {uri!r}")
             checked.append(uri)
+        if self.instance.allows_login_info:
+            # Login info public client (ADR 0007): exact loopback IP URIs only.
+            try:
+                return public_redirect_uris(checked)
+            except InvalidRedirectUri as error:
+                raise forms.ValidationError(str(error)) from None
         if self.instance.kind == Client.Kind.CONFIDENTIAL:
             try:
                 return confidential_redirect_uris(checked)
@@ -193,6 +200,7 @@ class ClientAdmin(_ClientAdmin):
         "client_id",
         "kind",
         "registered_via",
+        "allows_login_info",
         "created_at",
         "secret_hash",
         "machine_resource",

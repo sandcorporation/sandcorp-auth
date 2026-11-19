@@ -151,6 +151,16 @@ class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no
         "비우면 보내지 않는다.",
     )
     webhook_secret_encrypted = models.BinaryField(null=True, blank=True, editable=False)
+    # "Login info" (#102, ADR 0007): a public client the owner registered (`manage.py clients
+    # create-public --login-info`) for a program on one PC that listens on loopback. Only then
+    # may a public client ask for openid/profile/email; its redirect URIs match exactly (port
+    # included) and every /authorize shows the consent screen. Never set by DCR/CIMD.
+    allows_login_info = models.BooleanField(
+        "로그인 정보 허용",
+        default=False,
+        help_text="관리자가 만든 공개(loopback) 클라이언트만. 켜져 있으면 openid·profile·email "
+        "스코프를 받는다. 만들 때만 정한다.",
+    )
     # Machine clients (#76): the one resource (`aud`) and the scope names of it that a
     # client_credentials token carries. Set by `manage.py clients create-machine` only.
     machine_resource = models.ForeignKey(
@@ -167,12 +177,27 @@ class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no
     metadata_expires_at = models.DateTimeField(null=True, blank=True)
     metadata_document = models.JSONField(null=True, blank=True)
 
+    class Meta:
+        constraints = [
+            # Login info for a public client only when the owner registered it (ADR 0007).
+            models.CheckConstraint(
+                condition=Q(allows_login_info=False) | Q(kind="public", registered_via="admin"),
+                name="oauth_client_login_info_admin_public_only",
+            )
+        ]
+
     def __str__(self) -> str:
         return f"{self.name} ({self.client_id})"
 
     @property
     def is_public(self) -> bool:
         return self.kind == self.Kind.PUBLIC
+
+    @property
+    def public_login_info(self) -> bool:
+        """A public client that may ask for login info scopes (ADR 0007): registered by the
+        owner with the mark on. The CheckConstraint keeps DCR/CIMD rows out; this checks again."""
+        return self.is_public and self.registered_via == self.Via.ADMIN and self.allows_login_info
 
     # authlib ClientMixin
 
@@ -189,8 +214,11 @@ class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no
         return " ".join(sorted(set((scope or "").split())))
 
     def check_redirect_uri(self, redirect_uri: str) -> bool:
-        """authlib asks this at /authorize; loopback ports are free (`redirect_uri_matches`)."""
+        """authlib asks this at /authorize; loopback ports are free (`redirect_uri_matches`),
+        except for a login info client (ADR 0007): exact match, port included."""
         uris: list[str] = self.redirect_uris
+        if self.public_login_info:
+            return redirect_uri in uris
         return any(redirect_uri_matches(redirect_uri, uri) for uri in uris)
 
     def check_client_secret(self, client_secret: str) -> bool:
