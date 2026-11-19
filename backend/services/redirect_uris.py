@@ -68,3 +68,13 @@ def _host_as_written(parts: SplitResult) -> str:
     if parts.port is None:
         return parts.netloc
     return parts.netloc.rsplit(":", 1)[0]
+
+
+def exact_loopback_redirect_uri(uri: str) -> bool:
+    """A redirect URI for a login info public client (ADR 0007): http on the loopback IP
+    literal `127.0.0.1` or `[::1]` (not `localhost`, RFC 8252 §8.3) with an explicit port.
+    Matched exactly, port included, so the port is part of what the owner registers."""
+    parts = _loopback_parts(uri)
+    if parts is None or _host_as_written(parts) not in {"127.0.0.1", "[::1]"}:
+        return False
+    return parts.port is not None and valid_redirect_uri(uri)

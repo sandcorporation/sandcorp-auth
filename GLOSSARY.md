@@ -45,11 +45,11 @@ _Avoid_: OTP 기기, 2FA 장치
 
 **클라이언트(Client)**:
 대표를 대신해 토큰을 받는 프로그램(claude.ai 커넥터, Claude Code, 사이트 자체의 관리 화면). 동적 등록되거나 admin에서 등록된다.
-**허용 클라이언트**는 「일반 사용자 허용」 표시(`allows_members`, 기본 꺼짐)가 켜진 클라이언트로, 일반 사용자도 코드·토큰을 받는다. 꺼진 클라이언트에는 대표만 로그인한다. **공개 클라이언트**는 시크릿이 없고(`token_endpoint_auth_method=none`) CIMD·DCR로 등록된다. **기밀 클라이언트**는 사이트의 관리 화면 로그인용으로, 대표가 관리 명령(`clients create-confidential`)이나 admin으로만 등록하며 `/token`에서 시크릿(`client_secret_basic`·`client_secret_post`)으로 자신을 증명한다. 시크릿은 발급 때 한 번만 보이고 해시만 남는다. 둘 다 PKCE가 필수다. **기계 클라이언트**(#76)는 사람 없이 자기 자신으로 토큰을 받는 서비스(예: promptlab 스모크)다. 대표가 관리 명령(`clients create-machine`)으로만 만들고, 리소스 하나와 그 리소스의 스코프 몇 개에 묶이며, `/token`의 `grant_type=client_credentials`만 쓴다(이 그랜트는 기계 클라이언트에만 열린다). 토큰의 `sub`는 `client:<client_id>`, `acct`는 `machine`이고 refresh token은 없다.
+**허용 클라이언트**는 「일반 사용자 허용」 표시(`allows_members`, 기본 꺼짐)가 켜진 클라이언트로, 일반 사용자도 코드·토큰을 받는다. 꺼진 클라이언트에는 대표만 로그인한다. **공개 클라이언트**는 시크릿이 없고(`token_endpoint_auth_method=none`) CIMD·DCR로 등록된다. 한 PC의 loopback에서 도는 프로그램용 공개 클라이언트는 대표가 관리 명령(`clients create-public`)으로도 만들고, 그중 「로그인 정보 허용」 표시(`allows_login_info`)가 켜진 것만 로그인 정보 스코프를 받는다(ADR 0007). **기밀 클라이언트**는 사이트의 관리 화면 로그인용으로, 대표가 관리 명령(`clients create-confidential`)이나 admin으로만 등록하며 `/token`에서 시크릿(`client_secret_basic`·`client_secret_post`)으로 자신을 증명한다. 시크릿은 발급 때 한 번만 보이고 해시만 남는다. 둘 다 PKCE가 필수다. **기계 클라이언트**(#76)는 사람 없이 자기 자신으로 토큰을 받는 서비스(예: promptlab 스모크)다. 대표가 관리 명령(`clients create-machine`)으로만 만들고, 리소스 하나와 그 리소스의 스코프 몇 개에 묶이며, `/token`의 `grant_type=client_credentials`만 쓴다(이 그랜트는 기계 클라이언트에만 열린다). 토큰의 `sub`는 `client:<client_id>`, `acct`는 `machine`이고 refresh token은 없다.
 _Avoid_: 앱, 커넥터
 
 **로그인 정보 스코프(OpenID scope)**:
-`openid`·`profile`·`email`. 리소스의 권한이 아니라 「대표가 누구인지(이름·이메일)」를 클라이언트에 알려 줘도 된다는 허락이다. 기밀 클라이언트만 요청한다. `resource` 없이 요청하면 그랜트가 내부 리소스 `https://auth.sandcorp.co.kr/userinfo`에 묶이고, 그 액세스 토큰은 `/userinfo`에서만 쓰인다.
+`openid`·`profile`·`email`. 리소스의 권한이 아니라 「대표가 누구인지(이름·이메일)」를 클라이언트에 알려 줘도 된다는 허락이다. 기밀 클라이언트와 「로그인 정보 허용」 공개 클라이언트(ADR 0007)만 요청한다. `resource` 없이 요청하면 그랜트가 내부 리소스 `https://auth.sandcorp.co.kr/userinfo`에 묶이고, 그 액세스 토큰은 `/userinfo`에서만 쓰인다.
 _Avoid_: OIDC 권한, 프로필 스코프
 
 **ID 토큰(ID token)**:

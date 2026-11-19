@@ -118,7 +118,8 @@ def requested_resource(request: OAuth2Request) -> Resource:
 
 def requested_scopes(request: OAuth2Request, client: Client, resource: Resource) -> list[str]:
     """The requested scope names (sorted, distinct). Each belongs to `resource`, or is a login
-    info scope (`services.oidc`) asked for with `openid` by a confidential client; besides
+    info scope (`services.oidc`) asked for with `openid` by a confidential client or a public
+    one the owner marked for login info (ADR 0007); besides
     those, at least one scope of `resource`."""
     names = sorted(set(str(request.payload.scope or "").split()))
     if not names:
@@ -127,7 +128,7 @@ def requested_scopes(request: OAuth2Request, client: Client, resource: Resource)
     if login_info:
         if OPENID not in login_info:
             raise InvalidScopeError("'profile' and 'email' need 'openid'.")
-        if client.is_public:
+        if client.is_public and not client.public_login_info:
             raise InvalidScopeError("Login info scopes are for confidential clients only.")
     own = set(names) if resource.url == USERINFO_RESOURCE else set(names) - login_info
     if not own:
