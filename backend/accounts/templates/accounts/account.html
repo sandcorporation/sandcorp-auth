@@ -14,7 +14,7 @@
     {% for i in identities %}
     <li>
       <span><span class="sc-list-title">{{ i.label }}</span>{% if i.email %} <span class="auth-meta-text">{{ i.email }}</span>{% endif %}</span>
-      {% if can_unlink %}<form method="post" action="/account/identities/{{ i.pk }}/unlink">{% csrf_token %}<button type="submit" class="sc-btn sc-btn--sm sc-btn--secondary">해제</button></form>{% endif %}
+      {% if can_unlink %}<form method="post" action="/account/identities/{{ i.pk }}/unlink">{% csrf_token %}<button type="submit" class="sc-btn sc-btn--sm sc-btn--secondary" aria-label="{{ i.label }} 로그인 해제">해제</button></form>{% endif %}
     </li>
     {% endfor %}
   </ul>

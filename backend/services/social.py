@@ -299,9 +299,10 @@ def link_identity(user: User, profile: ExternalProfile, *, ip: str) -> bool:
     return True
 
 
-def unlink_identity(user: User, identity_id: int, *, ip: str) -> None:
+def unlink_identity(user: User, identity_id: int, *, ip: str) -> str:
     """Remove one of the account's social logins. Raises NotAMember, IdentityNotFound,
-    LastIdentity (members only: the owner signs in with its password + TOTP). The account row
+    LastIdentity (members only: the owner signs in with its password + TOTP). Returns the provider
+    key of the removed login. The account row
     is locked so two removals at once cannot both pass the "not the last one" check."""
     if not may_link(user):
         raise NotAMember(user.get_username())
@@ -321,6 +322,7 @@ def unlink_identity(user: User, identity_id: int, *, ip: str) -> None:
         ip=ip,
         detail={"provider": target.provider},
     )
+    return target.provider
 
 
 def social_login_allowed(next_url: str | None) -> bool:

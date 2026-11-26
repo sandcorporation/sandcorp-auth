@@ -351,6 +351,58 @@ def test_a_callback_is_good_once(
     assert callback(client, "google", query).status_code == 400
 
 
+def test_a_second_callback_after_the_login_went_through_returns_to_the_app(
+    client: Client, fake_providers: FakeProviders, next_url: str
+) -> None:
+    """Back button to the provider and picking again: no failure page, the app's `next`."""
+    query = start(client, "google", next_url)
+    fake_providers.google_codes["the-code"] = google_claims(query)
+    assert callback(client, "google", query).status_code == 302
+    again = callback(client, "google", query)
+    assert again.status_code == 302
+    assert again["Location"] == next_url
+    assert not AuditEvent.objects.filter(kind=audit.SOCIAL_LOGIN_FAILED).exists()
+
+
+def test_the_replayed_callback_does_not_count_against_the_address(
+    client: Client, fake_providers: FakeProviders, next_url: str
+) -> None:
+    query = start(client, "google", next_url)
+    fake_providers.google_codes["the-code"] = google_claims(query)
+    callback(client, "google", query)
+    for _ in range(10):
+        assert callback(client, "google", query).status_code == 302
+
+
+def test_a_replayed_callback_goes_home_once_the_note_is_old(
+    client: Client, fake_providers: FakeProviders, next_url: str, frozen_clock: FrozenClock
+) -> None:
+    query = start(client, "google", next_url)
+    fake_providers.google_codes["the-code"] = google_claims(query)
+    callback(client, "google", query)
+    frozen_clock.advance(10 * 60 + 1)
+    again = callback(client, "google", query)
+    assert again.status_code == 302
+    assert again["Location"] == "/"
+
+
+def test_a_callback_nobody_started_says_to_start_over_not_that_time_ran_out(
+    client: Client, fake_providers: FakeProviders, members_app: OAuthClient
+) -> None:
+    response = client.get("/login/google/callback?state=x&code=the-code")
+    assert "처음부터 다시 시작" in response.content.decode()
+    assert "시간이 지났" not in response.content.decode()
+
+
+def test_a_started_login_that_ran_out_says_time_ran_out(
+    client: Client, fake_providers: FakeProviders, next_url: str, frozen_clock: FrozenClock
+) -> None:
+    query = start(client, "google", next_url)
+    frozen_clock.advance(10 * 60 + 1)
+    response = callback(client, "google", query)
+    assert "시간이 지났" in response.content.decode()
+
+
 def test_a_started_login_expires(
     client: Client, fake_providers: FakeProviders, next_url: str, frozen_clock: FrozenClock
 ) -> None:
@@ -629,9 +681,16 @@ def test_a_member_with_two_logins_unlinks_one(
 ) -> None:
     link(member_client, fake_providers, "kakao")
     google = member.identities.get(provider="google")
+    page = member_client.get("/account/identities").content.decode()
+    assert 'aria-label="Google 로그인 해제"' in page
+    assert 'aria-label="Kakao 로그인 해제"' in page
     response = member_client.post(f"/account/identities/{google.pk}/unlink")
     assert response.status_code == 302
     assert list(member.identities.values_list("provider", flat=True)) == ["kakao"]
+    assert (
+        "Google 로그인 연결을 해제했습니다."
+        in member_client.get("/account/identities").content.decode()
+    )
     event = AuditEvent.objects.get(kind=audit.IDENTITY_UNLINKED)
     assert event.detail == {"provider": "google"}
 
