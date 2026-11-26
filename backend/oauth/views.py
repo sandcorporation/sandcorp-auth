@@ -242,6 +242,8 @@ def _consent_screen(
     if member and "login" in descriptions:
         # The stored text is the owner-facing one; a member just signs in to the app.
         descriptions["login"] = f"{client.name}에 로그인"
+    if member and "openid" in descriptions:
+        descriptions["openid"] = "계정 식별자"
     scopes = [
         {"name": name, "description": descriptions[name], "granted": name in granted}
         for name in grant.scopes

@@ -211,6 +211,18 @@ def test_member_consent_describes_login_as_signing_in_to_the_app(
     assert "관리 화면" not in page
 
 
+def test_member_consent_for_login_info_has_no_owner_wording_or_scope_names(
+    member_client: Client, members_proxy: Proxy
+) -> None:
+    oauth_client, _ = members_proxy
+    use_https(member_client)
+    url = "/authorize?" + authorize_query(oauth_client, resource=None, scope="openid profile email")
+    page = member_client.get(url).content.decode()
+    assert "대표" not in page
+    assert "계정 식별자" in page
+    assert "auth-scope-name" not in page
+
+
 def test_member_on_an_allowing_client_gets_a_member_access_token(
     member_client: Client, members_app: OAuthClient, member: User, frozen_clock: FrozenClock
 ) -> None:

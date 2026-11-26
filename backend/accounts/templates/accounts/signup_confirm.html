@@ -2,7 +2,7 @@
 {% block title %}이미 가입한 이메일{% endblock %}
 {% block content %}
 <h1>이전에 {{ existing }}로 가입하셨습니다</h1>
-<p class="auth-lead">{{ email }} 주소로 만든 Sandcorp 계정이 이미 있습니다. 그 계정으로 로그인하면 나중에 「내 계정」에서 {{ provider }} 로그인을 합칠 수 있습니다.</p>
+<p class="auth-lead">{{ email }} 주소로 만든 Sandcorp 계정이 이미 있습니다. 그 계정으로 로그인하면 나중에 「내 계정」에서 {{ provider }} 로그인을 연결할 수 있습니다.</p>
 <div class="auth-stack" data-slot="existing-login">
   {% for c in choices %}{% with verb=c.label|add:"로 로그인" %}{% include "accounts/_social_button.html" with p=c %}{% endwith %}{% endfor %}
 </div>

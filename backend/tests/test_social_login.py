@@ -555,6 +555,7 @@ def test_a_verified_email_of_another_account_shows_the_notice_first(
     page = client.get("/signup/confirm").content.decode()
     assert "이전에 Google로 가입하셨습니다" in page
     assert "/login/google?" in page  # sign in with that login instead
+    assert "로그인을 연결할 수 있습니다" in page and "합칠" not in page
 
     created = client.post("/signup/confirm")
     assert created.status_code == 302 and created["Location"] == terms_url(next_url)
