@@ -10,10 +10,18 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
+from django.template.loader import render_to_string
 from django.utils.safestring import mark_safe
 from django.views.decorators.http import require_http_methods, require_POST
 
-from accounts.session import NEXT_KEY, PENDING_USER_KEY, pending_user, safe_next
+from accounts.session import (
+    NEXT_KEY,
+    PENDING_USER_KEY,
+    allows_get,
+    pending_user,
+    safe_next,
+    same_origin_referer,
+)
 from accounts.social_views import social_buttons
 from core.http import client_ip
 from services import audit
@@ -178,12 +186,33 @@ def admin_login_redirect(request: HttpRequest) -> HttpResponse:
 
 
 def csrf_failure(request: HttpRequest, reason: str = "") -> HttpResponse:
-    """`CSRF_FAILURE_VIEW`: a page-expired screen; retry is a plain GET of the same path."""
-    path = request.path
-    retry = path if path.startswith("/") and not path.startswith(("//", "/\\")) else "/"
-    return render(request, "accounts/csrf_failed.html", {"retry": retry}, status=403)
+    """`CSRF_FAILURE_VIEW`: a page-expired screen whose retry is a plain GET (#106): the same
+    path with its query when that path answers GET (the consent screen keeps its client,
+    redirect, scope and state), else the same-origin page that sent the form, else home."""
+    retry = None
+    if allows_get(request.path_info):
+        retry = safe_next(request, request.get_full_path())
+    if retry is None:
+        retry = same_origin_referer(request)
+    return render(request, "accounts/csrf_failed.html", {"retry": retry or "/"}, status=403)
+
+
+def method_not_allowed(request: HttpRequest) -> HttpResponse:
+    """The page `accounts.middleware.MethodNotAllowedPageMiddleware` puts in a bare 405 (#106)."""
+    return render(request, "accounts/method_not_allowed.html", status=405)
 
 
 def forbidden(request: HttpRequest, exception: Exception | None = None) -> HttpResponse:
     """`handler403`: no bare "Forbidden" (an owner on a member-only screen, etc.)."""
     return render(request, "accounts/forbidden.html", status=403)
+
+
+def not_found(request: HttpRequest, exception: Exception | None = None) -> HttpResponse:
+    """`handler404` (#107): the service's page instead of Django's unstyled one."""
+    return render(request, "accounts/not_found.html", status=404)
+
+
+def server_error(request: HttpRequest) -> HttpResponse:
+    """`handler500` (#107): rendered without the request, so no context processor (session,
+    user) touches the database that may be what failed."""
+    return HttpResponse(render_to_string("accounts/server_error.html"), status=500)
