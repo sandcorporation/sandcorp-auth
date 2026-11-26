@@ -21,7 +21,7 @@ from adapters.clock import get_clock
 from core.http import client_ip
 from services import audit, throttle
 from services.consents import connected_apps, disconnect_app
-from services.login import IP_RULE
+from services.login import IP_RULE, locked_message
 from services.members import (
     EmailTaken,
     ExternalProfile,
@@ -135,9 +135,20 @@ def _just_signed_in_next(request: HttpRequest) -> str:
 
 
 def _failed(
-    request: HttpRequest, provider: str, reason: str, next_url: str, *, status: int = 400
+    request: HttpRequest,
+    provider: str,
+    reason: str,
+    next_url: str,
+    *,
+    status: int = 400,
+    wait: int = 0,
 ) -> HttpResponse:
-    context = {"login_url": _login_url(next_url), "reason": reason, "status": status}
+    context = {
+        "login_url": _login_url(next_url),
+        "reason": reason,
+        "status": status,
+        "locked_message": locked_message(wait) if wait else "",
+    }
     return render(request, "accounts/social_failed.html", context, status=status)
 
 
@@ -167,9 +178,10 @@ def social_callback(request: HttpRequest, provider: str) -> HttpResponse:
     next_url = raw.get("next", "") if isinstance(raw, dict) else ""
     next_url = next_url if isinstance(next_url, str) else ""
     ip_key = f"ip:{ip}"
-    if throttle.check(IP_RULE, ip_key).retry_after:
+    wait = throttle.check(IP_RULE, ip_key).retry_after
+    if wait:
         audit.record(audit.LOGIN_LOCKED, ip=ip, detail={"refused": True, "provider": provider})
-        return _failed(request, provider, "locked", next_url, status=429)
+        return _failed(request, provider, "locked", next_url, status=429, wait=wait)
     provider_error = request.GET.get("error", "")
     try:
         pending = read_pending(raw, provider)

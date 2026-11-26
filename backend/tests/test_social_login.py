@@ -18,7 +18,8 @@ from adapters.clock import get_clock
 from audit.models import AuditEvent
 from oauth.models import Client as OAuthClient
 from oauth.models import SigningKey
-from services import audit
+from services import audit, throttle
+from services.login import IP_RULE, locked_message
 from services.social_providers import (
     GITHUB_EMAILS_URL,
     GITHUB_TOKEN_URL,
@@ -475,8 +476,13 @@ def test_too_many_failed_callbacks_block_the_address(
         assert callback(client, "google", {**query, "state": "forged"}).status_code == 400
     query = start(client, "google", next_url)
     fake_providers.google_codes["the-code"] = google_claims(query)
-    assert callback(client, "google", query).status_code == 429
+    response = callback(client, "google", query)
+    assert response.status_code == 429
     assert fake_providers.posted == []
+    # The wait, in the words of the password login's lock (#137).
+    wait = throttle.check(IP_RULE, "ip:127.0.0.1").retry_after
+    assert wait > 0
+    assert locked_message(wait) in response.content.decode()
 
 
 def test_cancelling_at_the_provider_is_not_counted_as_an_attack(

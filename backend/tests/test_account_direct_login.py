@@ -42,6 +42,17 @@ NO_ACCOUNT = "아직 계정이 없습니다"
         ("owner", "", "/account"),
         ("withdrawn", "", "/account"),
         ("withdrawn", "/account", "/account"),
+        # Any other screen of this service (#138): back there, or 「내 계정」 when it is
+        # POST only or the login itself.
+        ("member", "/terms", "/terms"),
+        ("member", "/terms?next=%2Faccount", "/terms?next=%2Faccount"),
+        ("member", "/account/email", "/account"),
+        ("member", "/login", "/account"),
+        ("member", "/logout", "/account"),
+        ("member", "/login/google", "/account"),
+        ("new", "/terms", "/terms"),
+        ("new_same_email", "/terms", "/terms"),
+        ("owner", "/terms", "/terms"),
     ],
 )
 def test_social_login_without_an_app_signs_in_existing_accounts_only(
@@ -81,7 +92,7 @@ def test_social_login_without_an_app_signs_in_existing_accounts_only(
 
     if who in ("member", "owner"):
         assert response.status_code == 302, response.content
-        assert response["Location"] == "/account"
+        assert response["Location"] == button_next
         signed_in = session_user(client)
         assert signed_in is not None
         if who == "owner":
@@ -107,7 +118,7 @@ def test_social_login_without_an_app_signs_in_existing_accounts_only(
     assert response.status_code == 200, response.content
     body = response.content.decode()
     assert NO_ACCOUNT in body
-    assert 'href="/login?next=%2Faccount"' in body
+    assert 'href="/login?' + urlencode({"next": button_next}) + '"' in body
     assert "_auth_user_id" not in client.session
     assert User.objects.count() == users_before
     assert not ExternalIdentity.objects.filter(provider_sub=NEW_GOOGLE_SUB).exists()
@@ -120,8 +131,8 @@ def test_owner_home_has_a_way_into_my_account(logged_in_client: Client) -> None:
     assert 'href="/account"' in page
 
 
-def test_other_paths_and_apps_that_refuse_members_show_no_buttons(client: Client) -> None:
-    for next_url in ("/terms", "/authorize?client_id=nope"):
+def test_apps_that_refuse_members_show_no_buttons(client: Client) -> None:
+    for next_url in ("/authorize?client_id=nope", "/authorize"):
         page = client.get("/login?" + urlencode({"next": next_url})).content.decode()
         assert "data-provider" not in page
         response = client.get("/login/google?" + urlencode({"next": next_url}))
