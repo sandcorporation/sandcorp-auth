@@ -71,6 +71,43 @@ def test_csrf_retry_never_leaves_site() -> None:
         assert _csrf_retry(csrf_failure(request).content.decode()) == "/"
 
 
+def test_csrf_retry_on_login_keeps_posted_next(db: None) -> None:
+    strict = Client(enforce_csrf_checks=True)
+    response = strict.post("/login", {"next": "/authorize?client_id=abc&state=x"})
+    assert response.status_code == 403
+    assert (
+        _csrf_retry(response.content.decode())
+        == "/login?next=%2Fauthorize%3Fclient_id%3Dabc%26state%3Dx"
+    )
+
+
+def test_csrf_retry_on_terms_keeps_posted_next(db: None) -> None:
+    strict = Client(enforce_csrf_checks=True)
+    response = strict.post("/terms", {"next": "/authorize?client_id=abc"})
+    assert _csrf_retry(response.content.decode()) == "/terms?next=%2Fauthorize%3Fclient_id%3Dabc"
+
+
+def test_csrf_retry_keeps_query_next_over_body(db: None) -> None:
+    strict = Client(enforce_csrf_checks=True)
+    response = strict.post("/login?next=/a", {"next": "/b"})
+    assert _csrf_retry(response.content.decode()) == "/login?next=/a"
+
+
+@pytest.mark.parametrize("posted", ["https://evil.example/x", "//evil.example/x", "javascript:x"])
+def test_csrf_retry_drops_foreign_posted_next(db: None, posted: str) -> None:
+    strict = Client(enforce_csrf_checks=True)
+    response = strict.post("/login", {"next": posted})
+    assert _csrf_retry(response.content.decode()) == "/login"
+
+
+@pytest.mark.parametrize("path", ["/login/totp", "/signup/confirm"])
+def test_csrf_retry_on_session_flow_goes_back_to_the_page(db: None, path: str) -> None:
+    strict = Client(enforce_csrf_checks=True)
+    response = strict.post(path, {})
+    assert response.status_code == 403
+    assert _csrf_retry(response.content.decode()) == path
+
+
 def test_unknown_path_gets_404_page(client: Client, db: None) -> None:
     response = client.get("/no-such-page")
     assert response.status_code == 404
