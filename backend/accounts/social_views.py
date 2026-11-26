@@ -201,7 +201,10 @@ def social_callback(request: HttpRequest, provider: str) -> HttpResponse:
             return render(request, "accounts/social_no_account.html", context)
         return _failed(request, provider, error.reason, next_url, status=403)
     if result.user is None:
-        request.session[PENDING_SIGNUP_KEY] = dict(pending_signup(profile, pending["next"]))
+        waiting = pending_signup(
+            profile, pending["next"], may_create=pending["purpose"] != "account"
+        )
+        request.session[PENDING_SIGNUP_KEY] = dict(waiting)
         return redirect("accounts:signup_confirm")
     return _sign_into(request, result.user, pending["next"])
 
@@ -237,8 +240,10 @@ def signup_confirm(request: HttpRequest) -> HttpResponse:
     if waiting is None:
         request.session.pop(PENDING_SIGNUP_KEY, None)
         return redirect("accounts:login")
-    profile, next_url = waiting
+    profile, next_url = waiting.profile, waiting.next
     if request.method == "POST":
+        if not waiting.may_create:  # a login without an app makes no account (#135)
+            return redirect("accounts:signup_confirm")
         try:
             result = sign_in(profile, ip=client_ip(request), force_new=True)
         except SocialLoginFailed as error:
@@ -257,6 +262,7 @@ def signup_confirm(request: HttpRequest) -> HttpResponse:
         "choices": choices,
         "provider": ExternalIdentity.Provider(profile.provider).label,
         "email": profile.email,
+        "may_create": waiting.may_create,
     }
     return render(request, "accounts/signup_confirm.html", context)
 

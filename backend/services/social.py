@@ -19,7 +19,9 @@ live here.
 - Social buttons show where `social_login_allowed(next)`: the login is for an `/authorize`
   request of a client that allows members (spec 7). They also show with no app (#126): no
   `next`, `/` or a 「내 계정」 path (`account_login_next`). That login has purpose "account"
-  and signs into existing accounts only — a new identity gets no account (`create=False`).
+  and signs into existing accounts only — a new identity gets no account (`create=False`);
+  one whose verified email an account already has gets the same-email notice, which then
+  offers only that account's login (#135, `PendingSignup.may_create`).
 """
 
 import base64
@@ -80,7 +82,16 @@ class PendingSignup(TypedDict):
     email_verified: bool
     display_name: str
     next: str
+    # False for a login without an app (#135): the notice cannot make a new account.
+    may_create: bool
     started_at: float
+
+
+@dataclass(frozen=True)
+class WaitingSignup:
+    profile: ExternalProfile
+    next: str
+    may_create: bool
 
 
 class NotAMember(Exception):
@@ -237,17 +248,17 @@ def providers_with_email(profile: ExternalProfile) -> list[str]:
 def sign_in(
     profile: ExternalProfile, *, ip: str, force_new: bool = False, create: bool = True
 ) -> SignInResult:
-    """`create=False` (a login without an app, #126): a new identity raises
-    SocialLoginFailed("no_account") instead of signing up or asking about the same email."""
+    """`create=False` (a login without an app, #126): a new identity never signs up — it
+    gets the same-email answer (#135) or SocialLoginFailed("no_account")."""
     user = identity_owner(profile)
     created = False
-    if user is None and not create:
-        raise SocialLoginFailed("no_account")
     if user is None:
-        if not force_new:
+        if not force_new or not create:
             existing = providers_with_email(profile)
             if existing:
                 return SignInResult(user=None, existing=existing)
+        if not create:
+            raise SocialLoginFailed("no_account")
         try:
             user = create_member(profile)
             created = True
@@ -367,7 +378,9 @@ def account_login_next(next_url: str | None) -> str | None:
     return None
 
 
-def pending_signup(profile: ExternalProfile, next_url: str) -> PendingSignup:
+def pending_signup(
+    profile: ExternalProfile, next_url: str, *, may_create: bool = True
+) -> PendingSignup:
     return PendingSignup(
         provider=profile.provider,
         provider_sub=profile.provider_sub,
@@ -375,18 +388,22 @@ def pending_signup(profile: ExternalProfile, next_url: str) -> PendingSignup:
         email_verified=profile.email_verified,
         display_name=profile.display_name,
         next=next_url,
+        may_create=may_create,
         started_at=get_clock().now().timestamp(),
     )
 
 
-def read_pending_signup(value: object) -> tuple[ExternalProfile, str] | None:
-    """The waiting profile and its `next`, or None when there is none or it is too old."""
+def read_pending_signup(value: object) -> WaitingSignup | None:
+    """The waiting profile, its `next` and whether it may sign up; None when there is none or
+    it is too old."""
     if not isinstance(value, dict) or not _fresh(value.get("started_at")):
         return None
     text_keys = ("provider", "provider_sub", "email", "display_name", "next")
     if not all(isinstance(value.get(key), str) for key in text_keys):
         return None
     if not isinstance(value.get("email_verified"), bool):
+        return None
+    if not isinstance(value.get("may_create"), bool):
         return None
     profile = ExternalProfile(
         provider=value["provider"],
@@ -395,4 +412,4 @@ def read_pending_signup(value: object) -> tuple[ExternalProfile, str] | None:
         email_verified=value["email_verified"],
         display_name=value["display_name"],
     )
-    return profile, value["next"]
+    return WaitingSignup(profile=profile, next=value["next"], may_create=value["may_create"])

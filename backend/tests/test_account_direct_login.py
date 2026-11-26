@@ -92,6 +92,18 @@ def test_social_login_without_an_app_signs_in_existing_accounts_only(
             assert client.get("/account").status_code == 200
         return
 
+    if who == "new_same_email":
+        # The same-email notice, as through an app, but it only leads to the existing login.
+        assert response.status_code == 302, response.content
+        assert response["Location"] == "/signup/confirm"
+        body = client.get("/signup/confirm").content.decode().replace("&amp;", "&")
+        assert "이전에 Kakao로 가입하셨습니다" in body
+        assert 'href="/login/kakao?' + urlencode({"next": button_next}) + '"' in body
+        assert 'data-slot="new-account"' not in body
+        assert "_auth_user_id" not in client.session
+        assert User.objects.count() == users_before
+        return
+
     assert response.status_code == 200, response.content
     body = response.content.decode()
     assert NO_ACCOUNT in body
@@ -122,3 +134,23 @@ def test_signed_out_member_is_sent_to_the_login_with_buttons(client: Client) -> 
         assert response.status_code == 302
         page = client.get(response["Location"]).content.decode()
         assert 'data-provider="google"' in page
+
+
+def test_no_new_account_from_the_same_email_notice_without_an_app(
+    client: Client, fake_providers: FakeProviders, frozen_clock: FrozenClock
+) -> None:
+    make_member("kakao", "4000000001")
+    google_login(client, fake_providers, "/account", sub=NEW_GOOGLE_SUB, email=MEMBER_EMAIL)
+    users_before = User.objects.count()
+    created_before = AuditEvent.objects.filter(kind=audit.MEMBER_CREATED).count()
+
+    response = client.post("/signup/confirm")
+
+    assert response.status_code == 302
+    assert response["Location"] == "/signup/confirm"
+    assert User.objects.count() == users_before
+    assert not ExternalIdentity.objects.filter(provider_sub=NEW_GOOGLE_SUB).exists()
+    assert "_auth_user_id" not in client.session
+    assert AuditEvent.objects.filter(kind=audit.MEMBER_CREATED).count() == created_before
+    # The notice is still there, with the existing login.
+    assert "이전에 Kakao로 가입하셨습니다" in client.get("/signup/confirm").content.decode()
