@@ -347,7 +347,7 @@ def unlink(request: HttpRequest, identity_id: int) -> HttpResponse:
     except _StepUp:
         return _step_up()
     try:
-        unlink_identity(user, identity_id, ip=client_ip(request))
+        provider = unlink_identity(user, identity_id, ip=client_ip(request))
     except IdentityNotFound as error:
         raise Http404("no such linked login") from error
     except LastIdentity:
@@ -355,7 +355,9 @@ def unlink(request: HttpRequest, identity_id: int) -> HttpResponse:
     except NotAMember as error:
         raise PermissionDenied("for members only") from error
     else:
-        messages.success(request, "로그인 연결을 해제했습니다.")
+        messages.success(
+            request, f"{ExternalIdentity.Provider(provider).label} 로그인 연결을 해제했습니다."
+        )
     return redirect("accounts:account")
 
 
