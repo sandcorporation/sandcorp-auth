@@ -8,7 +8,9 @@ from django.contrib import messages
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
-from django.http import HttpRequest, HttpResponse
+from django.core.exceptions import SuspiciousOperation
+from django.http import HttpRequest, HttpResponse, UnreadablePostError
+from django.http.multipartparser import MultiPartParserError
 from django.shortcuts import redirect, render
 from django.template.loader import render_to_string
 from django.utils.safestring import mark_safe
@@ -192,9 +194,22 @@ def csrf_failure(request: HttpRequest, reason: str = "") -> HttpResponse:
     retry = None
     if allows_get(request.path_info):
         retry = safe_next(request, request.get_full_path())
+        if retry is not None and not request.META.get("QUERY_STRING"):
+            retry = _with_posted_next(request, retry)
     if retry is None:
         retry = same_origin_referer(request)
     return render(request, "accounts/csrf_failed.html", {"retry": retry or "/"}, status=403)
+
+
+def _with_posted_next(request: HttpRequest, path: str) -> str:
+    """`path` plus the form's hidden `next` (login, terms) when it is a same-site path; the
+    body may be unreadable on a CSRF failure, then the plain path stands (#121)."""
+    try:
+        posted = request.POST.get("next")
+    except SuspiciousOperation, UnreadablePostError, MultiPartParserError, ValueError:
+        return path
+    next_url = safe_next(request, posted)
+    return f"{path}?{urlencode({'next': next_url})}" if next_url else path
 
 
 def method_not_allowed(request: HttpRequest) -> HttpResponse:
