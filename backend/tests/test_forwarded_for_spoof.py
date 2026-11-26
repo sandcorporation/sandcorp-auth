@@ -36,11 +36,11 @@ def test_forged_forwarded_for_does_not_escape_the_ip_lock(
 
 
 def ip_for(forwarded: str | None, hops: int, remote: str = PROXY) -> str:
-    meta = {"REMOTE_ADDR": remote}
+    request = RequestFactory().get("/", REMOTE_ADDR=remote)
     if forwarded is not None:
-        meta["HTTP_X_FORWARDED_FOR"] = forwarded
+        request.META["HTTP_X_FORWARDED_FOR"] = forwarded
     with override_settings(TRUST_X_FORWARDED_FOR=hops):
-        return client_ip(RequestFactory().get("/", **meta))
+        return client_ip(request)
 
 
 @pytest.mark.parametrize(
