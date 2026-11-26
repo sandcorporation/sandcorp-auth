@@ -1,8 +1,10 @@
 {% extends "accounts/base.html" %}
 {% block content %}
 <h1>로그인</h1>
+{% for notice in notices %}<div class="sc-alert auth-alert" role="status" data-slot="login-notice"><span class="sc-alert-title">안내</span>{{ notice }}</div>{% endfor %}
 {% if social %}
-<p class="auth-lead">Sandcorp 계정으로 계속합니다. 처음이면 계정이 만들어집니다.</p>
+{% if signs_up %}<p class="auth-lead">Sandcorp 계정으로 계속합니다. 처음이면 계정이 만들어집니다.</p>
+{% else %}<p class="auth-lead">Sandcorp 계정으로 로그인합니다.</p>{% endif %}
 {% if error %}<div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">로그인하지 못했습니다</span>{{ error }}</div>{% endif %}
 <div class="auth-stack" data-slot="social-login">
   {% for p in social %}{% include "accounts/_social_button.html" %}{% endfor %}

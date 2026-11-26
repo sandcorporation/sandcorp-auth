@@ -1,0 +1,7 @@
+{% extends "accounts/base.html" %}
+{% block title %}계정 없음{% endblock %}
+{% block content %}
+<h1>아직 계정이 없습니다</h1>
+<p class="auth-lead" data-slot="no-account">쓰는 앱에서 가입하세요.</p>
+<a class="sc-btn sc-btn--accent sc-btn--block" href="{{ login_url }}">로그인 화면으로</a>
+{% endblock %}

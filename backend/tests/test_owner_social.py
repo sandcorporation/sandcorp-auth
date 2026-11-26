@@ -121,6 +121,16 @@ def test_owner_links_kakao_from_the_account_page(
     assert not ExternalIdentity.objects.filter(user=owner).exists()
 
 
+def test_owner_replaying_the_social_callback_returns_to_the_app(
+    social_owner: Client, members_app: OAuthClient
+) -> None:
+    query = {"state": "x", "code": "the-code"}
+    again = social_owner.get("/login/kakao/callback?" + urlencode(query))
+    assert again.status_code == 302
+    assert again["Location"] == member_level_url(members_app)
+    assert not AuditEvent.objects.filter(kind=audit.SOCIAL_LOGIN_FAILED).exists()
+
+
 def test_social_session_must_step_up_before_changing_sign_in_methods(
     social_owner: Client,
 ) -> None:
@@ -376,3 +386,33 @@ def test_merge_takes_a_member_into_the_owner_only(
     names = {"owner": OWNER_USERNAME, "member": member.username}
     with pytest.raises(MergeRefused):
         merge_member_into_owner(names[source], names[target])
+
+
+def test_owner_social_login_before_totp_enrollment_explains_instead_of_signing_out(
+    owner: User,
+    members_app: OAuthClient,
+    fake_providers: FakeProviders,
+    client: Client,
+) -> None:
+    link_owner_kakao(owner)
+    use_https(client)
+    response = kakao_login(
+        client, fake_providers, member_level_url(members_app), kakao_user(OWNER_KAKAO_ID)
+    )
+    assert response.status_code == 302
+    assert response["Location"].startswith("/login")
+    assert session_user(client) is None  # a social session never opens TOTP enrollment
+    assert client.get("/totp/setup").status_code == 302
+    html = client.get(response["Location"]).content.decode()
+    assert "OTP 등록을 먼저 마쳐야 합니다" in html
+    assert 'data-slot="login-notice"' in html
+
+
+def test_session_after_reset_totp_ends_with_a_notice(logged_in_client: Client) -> None:
+    call_command("owner", "reset-totp", stdout=StringIO())
+    response = logged_in_client.get("/")
+    assert response.status_code == 302
+    assert session_user(logged_in_client) is None
+    html = logged_in_client.get("/login").content.decode()
+    assert "OTP 등록을 먼저 마쳐야 합니다" in html
+    assert "OTP 등록을 먼저" not in logged_in_client.get("/login").content.decode()  # shown once

@@ -161,3 +161,11 @@ def test_next_must_be_a_relative_path(
 ) -> None:
     login_password(client, next_url=next_url)
     assert client.post("/totp/setup", {"code": totp_code(owner)})["Location"] == "/"
+
+
+def test_totp_setup_qr_has_accessible_name(
+    client: Client, owner: User, frozen_clock: FrozenClock
+) -> None:
+    assert login_password(client) == "/totp/setup"
+    html = client.get("/totp/setup").content.decode()
+    assert 'role="img"' in html and 'aria-label="TOTP 등록 QR 코드"' in html

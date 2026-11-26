@@ -6,9 +6,11 @@ real (`transaction=True`). They pin what the single-row rules must hold under co
 MySQL/InnoDB at READ COMMITTED: one active signing key, one live consent and one live refresh
 token family (unique indexes over generated marker columns, since MySQL has no partial
 indexes), one account per external identity (#35), throttle counters without deadlocks
-(upsert, not INSERT IGNORE), and one winner for an authorization code or a refresh token.
+(upsert, not INSERT IGNORE), one winner for an authorization code or a refresh token, and no
+live refresh token family left on a consent revoked during a code exchange (#111).
 """
 
+import itertools
 import threading
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -25,6 +27,7 @@ from oauth.models import Client as OAuthClient
 from oauth.models import Consent, RefreshTokenFamily, Resource, SigningKey, WebhookDelivery
 from oauth.tokens import live_family
 from services import audit, throttle
+from services.consents import revoke_consent
 from services.members import ExternalProfile, IdentityTaken, create_member
 from services.signing import ActiveSigningKeyExists, create_signing_key
 from services.social import SignInResult, link_identity, sign_in, unlink_identity
@@ -214,6 +217,31 @@ def test_a_refresh_token_is_rotated_once_and_every_racer_gets_the_successor(
     assert RefreshToken.objects.count() == 2
     assert RefreshTokenFamily.objects.get().revoked_at is None
     assert refresh(Client(), dcr_client, successors.pop()).status_code == 200
+
+
+def _take_turn(jobs: Sequence[Callable[[], object]], turn: itertools.count[int]) -> object:
+    return jobs[next(turn)]()
+
+
+def test_a_consent_revoked_during_a_code_exchange_keeps_no_live_family(
+    logged_in_client: Client, owner: User, dcr_client: OAuthClient, signing_key: SigningKey
+) -> None:
+    for _ in range(ROUNDS):
+        code, verifier = obtain_authorization_code(logged_in_client, dcr_client)
+        consent = Consent.objects.select_related("client", "resource").get(
+            user=owner, revoked_at__isnull=True
+        )
+        jobs: list[Callable[[], object]] = [
+            partial(_exchange, dcr_client, code, verifier),
+            partial(revoke_consent, consent, reason="consent_revoked", actor="admin", ip=""),
+        ]
+        turn = itertools.count()
+
+        results = race(partial(_take_turn, jobs, turn), threads=2)
+
+        assert all(not isinstance(r, BaseException) for r in results), results
+        assert Consent.objects.get(pk=consent.pk).revoked_at is not None
+        assert not RefreshTokenFamily.objects.filter(consent=consent, revoked_at=None).exists()
 
 
 def test_concurrent_withdrawals_withdraw_once_and_queue_one_webhook(

@@ -3,7 +3,7 @@
 {% block content %}
 <h1>인증 앱 등록</h1>
 <p class="auth-lead">처음 로그인하려면 인증 앱(Google Authenticator, 1Password 등)을 등록해야 합니다. 등록을 마치기 전에는 다른 화면을 쓸 수 없습니다.</p>
-<div class="auth-qr" aria-label="TOTP 등록 QR 코드">{{ qr_svg }}</div>
+<div class="auth-qr" role="img" aria-label="TOTP 등록 QR 코드">{{ qr_svg }}</div>
 <p class="sc-field-label auth-subtle">QR을 찍을 수 없으면 이 키를 직접 넣으세요 ({{ username }})</p>
 <code class="auth-secret">{{ secret }}</code>
 {% if error %}<div class="sc-alert sc-alert--error auth-alert auth-subtle" role="alert"><span class="sc-alert-title">코드가 맞지 않습니다</span>{{ error }}</div>{% endif %}

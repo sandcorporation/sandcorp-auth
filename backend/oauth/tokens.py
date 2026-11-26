@@ -18,6 +18,7 @@ from authlib.oauth2.rfc6750 import BearerTokenGenerator
 from django.conf import settings
 from django.contrib.auth.base_user import AbstractBaseUser
 from django.contrib.auth.models import User
+from django.db import transaction
 from django.utils.crypto import salted_hmac
 
 from adapters.clock import get_clock
@@ -210,18 +211,30 @@ class SandcorpTokenGenerator(BearerTokenGenerator):  # type: ignore[misc]  # no 
 
 
 def live_family(consent: Consent) -> RefreshTokenFamily:
-    """The consent's live refresh token family, opened on first use (one live per consent)."""
-    family, _ = RefreshTokenFamily.objects.get_or_create(
-        consent=consent,
-        revoked_at=None,
-        defaults={
-            "client_id": consent.client_id,
-            "user_id": consent.user_id,
-            "resource_id": consent.resource_id,
-            "created_at": get_clock().now(),
-        },
-    )
+    """The consent's live refresh token family, opened on first use (one live per consent).
+    The consent row is locked while the family is found or opened, so a family is never opened
+    on a consent `services.consents.revoke_consent` has revoked (it takes the same row first)."""
+    with transaction.atomic():
+        if not lock_live_consent(consent):
+            raise RuntimeError("a refresh token family needs a live consent")
+        family, _ = RefreshTokenFamily.objects.get_or_create(
+            consent=consent,
+            revoked_at=None,
+            defaults={
+                "client_id": consent.client_id,
+                "user_id": consent.user_id,
+                "resource_id": consent.resource_id,
+                "created_at": get_clock().now(),
+            },
+        )
     return family
+
+
+def lock_live_consent(consent: Consent) -> bool:
+    """Lock `consent`'s row until the transaction ends; False when it is already revoked."""
+    return (
+        Consent.objects.select_for_update().filter(pk=consent.pk, revoked_at__isnull=True).exists()
+    )
 
 
 def store_refresh_token(

@@ -73,7 +73,7 @@ _Avoid_: 권한, 롤
 _Avoid_: 승인, 허가
 
 **인가 코드(Authorization code)**:
-동의 뒤 `/authorize`가 클라이언트의 redirect_uri로 돌려주는 1회용 값. 클라이언트·redirect_uri·PKCE `code_challenge`(S256만)·리소스·스코프·그 코드를 낸 동의에 묶이고, 5분 동안만 쓸 수 있다. DB에는 SHA-256 해시만 남는다. 토큰 엔드포인트에서 한 번 교환되면 사용 시각이 찍혀 다시 쓸 수 없다. 이미 쓴 코드가 다시 오면 거부하고(`invalid_grant`) 그 코드의 동의에서 시작된 살아 있는 리프레시 토큰 패밀리를 폐기한다(감사 `token.code_reuse_detected`). 교환으로 받는 액세스 토큰의 `aud`는 코드에 묶인 리소스 URL이고, 교환 요청에 `resource`가 오면 그 URL과 정확히 같아야 한다(다르면 `invalid_target`).
+동의 뒤 `/authorize`가 클라이언트의 redirect_uri로 돌려주는 1회용 값. 클라이언트·redirect_uri·PKCE `code_challenge`(S256만)·리소스·스코프·그 코드를 낸 동의에 묶이고, 5분 동안만 쓸 수 있다. DB에는 SHA-256 해시만 남는다. 토큰 엔드포인트에서 한 번 교환되면 사용 시각이 찍혀 다시 쓸 수 없다. 코드를 낸 동의가 폐기되면(연결 끊기·admin 철회·더 넓은 동의로 바뀜·탈퇴) 아직 쓰지 않은 코드도 함께 죽어 `invalid_grant`이고, 패밀리를 열지 않는다(#111). 이미 쓴 코드가 다시 오면 거부하고(`invalid_grant`) 그 코드의 동의에서 시작된 살아 있는 리프레시 토큰 패밀리를 폐기한다(감사 `token.code_reuse_detected`). 교환으로 받는 액세스 토큰의 `aud`는 코드에 묶인 리소스 URL이고, 교환 요청에 `resource`가 오면 그 URL과 정확히 같아야 한다(다르면 `invalid_target`).
 _Avoid_: 승인 코드, 인증 코드
 
 **리프레시 토큰 패밀리(Refresh token family)**:

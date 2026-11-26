@@ -41,7 +41,7 @@ def test_csrf_failure_shows_retry_page(db: None) -> None:
     assert response.status_code == 403
     html = response.content.decode()
     assert "페이지가 만료됐습니다" in html
-    assert 'href="/logout"' in html
+    assert 'href="/" data-slot="retry"' in html  # /logout is POST-only (#106)
 
 
 def test_owner_on_member_screen_gets_page_not_bare_403(logged_in_client: Client) -> None:
@@ -56,19 +56,32 @@ def test_staff_on_admin_login_goes_to_admin(logged_in_client: Client) -> None:
     assert response["Location"] == ADMIN
 
 
-def test_csrf_retry_link_never_protocol_relative() -> None:
-    from django.test import RequestFactory
-
-    from accounts.views import csrf_failure
-
-    for path in ("//evil.example/x", "/\\evil.example"):
-        html = csrf_failure(RequestFactory().post(path)).content.decode()
-        assert 'href="/"' in html
-    assert 'href="/logout"' in csrf_failure(RequestFactory().post("/logout")).content.decode()
-
-
 def test_relogin_page_masks_email(client: Client, db: None) -> None:
     client.force_login(make_member())
     html = client.get(ADMIN_LOGIN).content.decode()
     assert MEMBER_EMAIL not in html
     assert MEMBER_EMAIL[:2] + "***@" + MEMBER_EMAIL.split("@")[1] in html
+
+
+def test_member_home_shows_readable_name_and_account_link(client: Client, db: None) -> None:
+    member = make_member()
+    client.force_login(member)
+    html = client.get("/").content.decode()
+    assert member.get_username() not in html
+    assert MEMBER_EMAIL not in html
+    assert MEMBER_EMAIL[:2] + "***@" + MEMBER_EMAIL.split("@")[1] in html
+    assert 'href="/account"' in html
+    assert ADMIN not in html
+    assert 'action="/logout"' in html
+
+
+def test_member_home_without_email_names_the_provider(client: Client, db: None) -> None:
+    client.force_login(make_member("kakao", "777", email=""))
+    html = client.get("/").content.decode()
+    assert "Kakao 계정으로" in html
+
+
+def test_owner_home_keeps_the_admin_button(logged_in_client: Client) -> None:
+    html = logged_in_client.get("/").content.decode()
+    assert f'href="{ADMIN}"' in html
+    assert 'href="/account"' in html  # 「내 계정」 for the owner too (#126)

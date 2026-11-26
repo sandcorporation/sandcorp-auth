@@ -13,6 +13,8 @@ While either refuses (`login_blocked`) the views must not judge credentials at a
 and messages tell nothing about the password.
 """
 
+import math
+
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 
@@ -21,6 +23,12 @@ from services.totp import accept_code, confirmed_device, enrollment_device
 
 IP_RULE = "login"
 ACCOUNT_RULE = "login_account"
+
+
+def locked_message(seconds: int) -> str:
+    """What a refused login says, for the password login and the social callback alike."""
+    when = f"{seconds}초" if seconds < 120 else f"약 {math.ceil(seconds / 60)}분"
+    return f"로그인 시도가 너무 많습니다. {when} 뒤 다시 시도하세요."
 
 
 def _ip_key(ip: str) -> str:

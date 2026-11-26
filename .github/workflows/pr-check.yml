@@ -6,6 +6,8 @@ name: pr-check
 
 on:
   pull_request:
+    # staging 대상 PR은 제외 — 기능을 staging에 모은 뒤 main PR에서 전체 검사한다(#104).
+    branches-ignore: [staging]
   workflow_call:
 
 permissions:

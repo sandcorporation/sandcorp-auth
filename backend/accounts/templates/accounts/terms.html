@@ -5,6 +5,10 @@
 <h1>약관 동의</h1>
 {% if unavailable %}
 <div class="sc-alert auth-alert" role="status" data-slot="terms-unavailable"><span class="sc-alert-title">안내</span>지금은 가입을 받을 수 없습니다. 잠시 뒤 다시 시도해 주세요.</div>
+<div class="auth-stack" data-slot="terms-unavailable-actions">
+  {% if next %}<a class="sc-btn sc-btn--secondary sc-btn--block" href="/">홈으로</a>{% endif %}
+  <form method="post" action="/logout">{% csrf_token %}<button class="sc-btn sc-btn--secondary sc-btn--block" type="submit">로그아웃</button></form>
+</div>
 {% else %}
 <p class="auth-lead">Sandcorp 계정을 쓰려면 아래 필수 항목에 모두 동의해 주세요.</p>
 {% if error %}<div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">동의가 필요합니다</span>{{ error }}</div>{% endif %}

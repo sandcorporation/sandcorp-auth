@@ -16,8 +16,12 @@ live here.
   to another account is refused, and the last identity of a member cannot be removed (the
   owner keeps its password + TOTP, so it may remove all). The owner's views ask for a recent
   password + TOTP first (`services.step_up`).
-- Social buttons show only where `social_login_allowed(next)`: the login is for an
-  `/authorize` request of a client that allows members (spec 7).
+- Social buttons show where `social_login_allowed(next)`: the login is for an `/authorize`
+  request of a client that allows members (spec 7). They also show with no app (#126, #138):
+  any other `next` on this host but `/authorize` (`account_login_next`). That login has
+  purpose "account" and signs into existing accounts only — a new identity gets no account
+  (`create=False`); one whose verified email an account already has gets the same-email
+  notice, which then offers only that account's login (#135, `PendingSignup.may_create`).
 """
 
 import base64
@@ -34,6 +38,7 @@ from django.db.models import Q
 from django.db.models.functions import Lower
 
 from accounts.models import ExternalIdentity, Member
+from accounts.session import allows_get
 from adapters.clock import get_clock
 from adapters.randomness import get_randomness
 from services import audit
@@ -48,7 +53,13 @@ from services.social_providers import (
 
 PENDING_SECONDS: Final = 10 * 60
 
-type Purpose = Literal["login", "link"]
+# "login": through an app's /authorize (may sign up); "link": add a login to the signed-in
+# account; "account": straight to 「내 계정」, existing accounts only (#126).
+type Purpose = Literal["login", "link", "account"]
+
+ACCOUNT_HOME: Final = "/account"
+# The login's own screens: a login without an app that was headed there lands on 「내 계정」.
+LOGIN_PATHS: Final = frozenset({"", "/", "/login", "/logout", "/signup/confirm"})
 
 
 class PendingSocial(TypedDict):
@@ -72,7 +83,16 @@ class PendingSignup(TypedDict):
     email_verified: bool
     display_name: str
     next: str
+    # False for a login without an app (#135): the notice cannot make a new account.
+    may_create: bool
     started_at: float
+
+
+@dataclass(frozen=True)
+class WaitingSignup:
+    profile: ExternalProfile
+    next: str
+    may_create: bool
 
 
 class NotAMember(Exception):
@@ -158,6 +178,8 @@ def read_pending(value: object, provider_name: str) -> PendingSocial:
     if not _fresh(value.get("started_at")):
         raise SocialLoginFailed("pending_login_expired")
     purpose: Purpose = "link" if value["purpose"] == "link" else "login"
+    if value["purpose"] == "account":
+        purpose = "account"
     return PendingSocial(
         provider=value["provider"],
         purpose=purpose,
@@ -224,14 +246,20 @@ def providers_with_email(profile: ExternalProfile) -> list[str]:
     return sorted({str(labels.get(name, name)) for name in providers})
 
 
-def sign_in(profile: ExternalProfile, *, ip: str, force_new: bool = False) -> SignInResult:
+def sign_in(
+    profile: ExternalProfile, *, ip: str, force_new: bool = False, create: bool = True
+) -> SignInResult:
+    """`create=False` (a login without an app, #126): a new identity never signs up — it
+    gets the same-email answer (#135) or SocialLoginFailed("no_account")."""
     user = identity_owner(profile)
     created = False
     if user is None:
-        if not force_new:
+        if not force_new or not create:
             existing = providers_with_email(profile)
             if existing:
                 return SignInResult(user=None, existing=existing)
+        if not create:
+            raise SocialLoginFailed("no_account")
         try:
             user = create_member(profile)
             created = True
@@ -299,9 +327,10 @@ def link_identity(user: User, profile: ExternalProfile, *, ip: str) -> bool:
     return True
 
 
-def unlink_identity(user: User, identity_id: int, *, ip: str) -> None:
+def unlink_identity(user: User, identity_id: int, *, ip: str) -> str:
     """Remove one of the account's social logins. Raises NotAMember, IdentityNotFound,
-    LastIdentity (members only: the owner signs in with its password + TOTP). The account row
+    LastIdentity (members only: the owner signs in with its password + TOTP). Returns the provider
+    key of the removed login. The account row
     is locked so two removals at once cannot both pass the "not the last one" check."""
     if not may_link(user):
         raise NotAMember(user.get_username())
@@ -321,6 +350,7 @@ def unlink_identity(user: User, identity_id: int, *, ip: str) -> None:
         ip=ip,
         detail={"provider": target.provider},
     )
+    return target.provider
 
 
 def social_login_allowed(next_url: str | None) -> bool:
@@ -338,7 +368,22 @@ def social_login_allowed(next_url: str | None) -> bool:
     return client is not None and client.allows_members
 
 
-def pending_signup(profile: ExternalProfile, next_url: str) -> PendingSignup:
+def account_login_next(next_url: str | None) -> str | None:
+    """Where a social login without an app lands (#126, #138), for a `next` already checked
+    by `safe_next`: None (no such login) for `/authorize` — an app's login is
+    `social_login_allowed` or none; 「내 계정」 for no `next`, the login's own screens and a
+    path that does not open with GET; else `next_url` itself."""
+    path = urlsplit(next_url or "").path
+    if path == "/authorize":
+        return None
+    if not next_url or path in LOGIN_PATHS or path.startswith("/login/"):
+        return ACCOUNT_HOME
+    return next_url if allows_get(path) else ACCOUNT_HOME
+
+
+def pending_signup(
+    profile: ExternalProfile, next_url: str, *, may_create: bool = True
+) -> PendingSignup:
     return PendingSignup(
         provider=profile.provider,
         provider_sub=profile.provider_sub,
@@ -346,18 +391,22 @@ def pending_signup(profile: ExternalProfile, next_url: str) -> PendingSignup:
         email_verified=profile.email_verified,
         display_name=profile.display_name,
         next=next_url,
+        may_create=may_create,
         started_at=get_clock().now().timestamp(),
     )
 
 
-def read_pending_signup(value: object) -> tuple[ExternalProfile, str] | None:
-    """The waiting profile and its `next`, or None when there is none or it is too old."""
+def read_pending_signup(value: object) -> WaitingSignup | None:
+    """The waiting profile, its `next` and whether it may sign up; None when there is none or
+    it is too old."""
     if not isinstance(value, dict) or not _fresh(value.get("started_at")):
         return None
     text_keys = ("provider", "provider_sub", "email", "display_name", "next")
     if not all(isinstance(value.get(key), str) for key in text_keys):
         return None
     if not isinstance(value.get("email_verified"), bool):
+        return None
+    if not isinstance(value.get("may_create"), bool):
         return None
     profile = ExternalProfile(
         provider=value["provider"],
@@ -366,4 +415,4 @@ def read_pending_signup(value: object) -> tuple[ExternalProfile, str] | None:
         email_verified=value["email_verified"],
         display_name=value["display_name"],
     )
-    return profile, value["next"]
+    return WaitingSignup(profile=profile, next=value["next"], may_create=value["may_create"])

@@ -139,6 +139,23 @@ def is_member(user: User) -> bool:
     return Member.objects.filter(user_id=user.pk).exists()
 
 
+def mask_email(email: str) -> str:
+    """`ab***@example.com`: keep the first two characters of the local part."""
+    local, at, domain = email.partition("@")
+    if not at:
+        return ""
+    return local[:2] + "***" + at + domain
+
+
+def account_label(user: User) -> str:
+    """A readable, non-secret name for a signed-in account: the masked email, else the label
+    of its first login method. Never the opaque `m_…` id."""
+    identity = user.identities.order_by("id").first()
+    return mask_email(user.email) or (
+        ExternalIdentity.Provider(identity.provider).label if identity else ""
+    )
+
+
 def account_kind(user: User) -> AccountKind:
     """`member` for a member, `owner` for the owner (the superuser without a Member row)."""
     if is_member(user):
