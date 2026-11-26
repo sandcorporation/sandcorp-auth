@@ -17,6 +17,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from accounts.models import ExternalIdentity
 from accounts.session import OWNER_ENROLLMENT_NOTICE, safe_next
+from adapters.clock import get_clock
 from core.http import client_ip
 from services import audit, throttle
 from services.consents import connected_apps, disconnect_app
@@ -30,7 +31,6 @@ from services.members import (
     member_email_verified,
     set_member_email,
 )
-from adapters.clock import get_clock
 from services.social import (
     PENDING_SECONDS,
     IdentityNotFound,

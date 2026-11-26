@@ -687,9 +687,10 @@ def test_a_member_with_two_logins_unlinks_one(
     response = member_client.post(f"/account/identities/{google.pk}/unlink")
     assert response.status_code == 302
     assert list(member.identities.values_list("provider", flat=True)) == ["kakao"]
-    assert "Google 로그인 연결을 해제했습니다." in member_client.get(
-        "/account/identities"
-    ).content.decode()
+    assert (
+        "Google 로그인 연결을 해제했습니다."
+        in member_client.get("/account/identities").content.decode()
+    )
     event = AuditEvent.objects.get(kind=audit.IDENTITY_UNLINKED)
     assert event.detail == {"provider": "google"}
 
