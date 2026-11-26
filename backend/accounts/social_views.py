@@ -36,6 +36,8 @@ from services.social import (
     IdentityNotFound,
     LastIdentity,
     NotAMember,
+    Purpose,
+    account_login_next,
     begin,
     complete,
     link_identity,
@@ -65,11 +67,22 @@ JUST_SIGNED_IN_KEY = "accounts.social_signed_in"
 CANCELLED = frozenset({"access_denied", "consent_required", "interaction_required"})
 
 
+def social_login_target(next_url: str) -> tuple[Purpose, str] | None:
+    """The kind of social login a login screen for `next_url` offers, and where it lands:
+    sign in (or up) for an app that allows members, sign in to 「내 계정」 with no app (#126),
+    or none."""
+    if social_login_allowed(next_url):
+        return "login", next_url
+    account_next = account_login_next(next_url)
+    return ("account", account_next) if account_next else None
+
+
 def social_buttons(next_url: str | None) -> list[dict[str, str]]:
-    """Buttons for the login screen: none unless the login is for a client allowing members."""
-    if not next_url or not social_login_allowed(next_url):
+    """Buttons for the login screen (see `social_login_target`)."""
+    target = social_login_target(next_url or "")
+    if target is None:
         return []
-    query = urlencode({"next": next_url})
+    query = urlencode({"next": target[1]})
     return [
         {"name": p.name, "label": p.label, "url": f"/login/{p.name}?{query}"}
         for p in configured_providers().values()
@@ -134,9 +147,11 @@ def social_start(request: HttpRequest, provider: str) -> HttpResponse:
     next_url = safe_next(request, request.GET.get("next")) or ""
     if request.user.is_authenticated:
         return redirect(next_url or "accounts:home")
-    if not social_login_allowed(next_url):
+    target = social_login_target(next_url)
+    if target is None:
         return redirect(_login_url(next_url))
-    url, pending = begin(social, "login", next_url=next_url)
+    purpose, next_url = target
+    url, pending = begin(social, purpose, next_url=next_url)
     request.session[PENDING_SOCIAL_KEY] = dict(pending)
     return redirect(url)
 
@@ -176,11 +191,14 @@ def social_callback(request: HttpRequest, provider: str) -> HttpResponse:
     if pending["purpose"] == "link":
         return _finish_link(request, pending["user_id"], profile, ip)
     try:
-        result = sign_in(profile, ip=ip)
+        result = sign_in(profile, ip=ip, create=pending["purpose"] != "account")
     except SocialLoginFailed as error:
         audit.record(
             audit.SOCIAL_LOGIN_FAILED, ip=ip, detail={"provider": provider, "reason": error.reason}
         )
+        if error.reason == "no_account":
+            context = {"login_url": _login_url(pending["next"])}
+            return render(request, "accounts/social_no_account.html", context)
         return _failed(request, provider, error.reason, next_url, status=403)
     if result.user is None:
         request.session[PENDING_SIGNUP_KEY] = dict(pending_signup(profile, pending["next"]))

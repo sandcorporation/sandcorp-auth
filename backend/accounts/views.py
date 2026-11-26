@@ -36,6 +36,7 @@ from services.login import (
     login_succeeded,
 )
 from services.members import account_label, is_member
+from services.social import social_login_allowed
 from services.step_up import is_weak_owner_session, mark_strong
 from services.totp import enrollment_device, is_enrolled, provisioning_uri, qr_svg, secret_of
 
@@ -93,6 +94,7 @@ def login_view(request: HttpRequest) -> HttpResponse:
         "step_up": step_up,
         "notices": [m.message for m in messages.get_messages(request)],
         "social": [] if step_up else social_buttons(next_url),
+        "signs_up": social_login_allowed(next_url),
     }
     return render(request, "accounts/login.html", context)
 

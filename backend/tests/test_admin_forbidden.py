@@ -84,4 +84,4 @@ def test_member_home_without_email_names_the_provider(client: Client, db: None) 
 def test_owner_home_keeps_the_admin_button(logged_in_client: Client) -> None:
     html = logged_in_client.get("/").content.decode()
     assert f'href="{ADMIN}"' in html
-    assert "/account" not in html
+    assert 'href="/account"' in html  # 「내 계정」 for the owner too (#126)

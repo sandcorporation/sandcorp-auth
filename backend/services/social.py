@@ -16,8 +16,10 @@ live here.
   to another account is refused, and the last identity of a member cannot be removed (the
   owner keeps its password + TOTP, so it may remove all). The owner's views ask for a recent
   password + TOTP first (`services.step_up`).
-- Social buttons show only where `social_login_allowed(next)`: the login is for an
-  `/authorize` request of a client that allows members (spec 7).
+- Social buttons show where `social_login_allowed(next)`: the login is for an `/authorize`
+  request of a client that allows members (spec 7). They also show with no app (#126): no
+  `next`, `/` or a 「내 계정」 path (`account_login_next`). That login has purpose "account"
+  and signs into existing accounts only — a new identity gets no account (`create=False`).
 """
 
 import base64
@@ -48,7 +50,13 @@ from services.social_providers import (
 
 PENDING_SECONDS: Final = 10 * 60
 
-type Purpose = Literal["login", "link"]
+# "login": through an app's /authorize (may sign up); "link": add a login to the signed-in
+# account; "account": straight to 「내 계정」, existing accounts only (#126).
+type Purpose = Literal["login", "link", "account"]
+
+ACCOUNT_HOME: Final = "/account"
+# Where a login without an app may go: 「내 계정」 screens (GET), not their actions.
+ACCOUNT_PATHS: Final = frozenset({ACCOUNT_HOME, "/account/identities", "/account/withdraw"})
 
 
 class PendingSocial(TypedDict):
@@ -158,6 +166,8 @@ def read_pending(value: object, provider_name: str) -> PendingSocial:
     if not _fresh(value.get("started_at")):
         raise SocialLoginFailed("pending_login_expired")
     purpose: Purpose = "link" if value["purpose"] == "link" else "login"
+    if value["purpose"] == "account":
+        purpose = "account"
     return PendingSocial(
         provider=value["provider"],
         purpose=purpose,
@@ -224,9 +234,15 @@ def providers_with_email(profile: ExternalProfile) -> list[str]:
     return sorted({str(labels.get(name, name)) for name in providers})
 
 
-def sign_in(profile: ExternalProfile, *, ip: str, force_new: bool = False) -> SignInResult:
+def sign_in(
+    profile: ExternalProfile, *, ip: str, force_new: bool = False, create: bool = True
+) -> SignInResult:
+    """`create=False` (a login without an app, #126): a new identity raises
+    SocialLoginFailed("no_account") instead of signing up or asking about the same email."""
     user = identity_owner(profile)
     created = False
+    if user is None and not create:
+        raise SocialLoginFailed("no_account")
     if user is None:
         if not force_new:
             existing = providers_with_email(profile)
@@ -338,6 +354,17 @@ def social_login_allowed(next_url: str | None) -> bool:
         return False
     client = find_client(client_ids[0])
     return client is not None and client.allows_members
+
+
+def account_login_next(next_url: str | None) -> str | None:
+    """Where a social login without an app lands: 「내 계정」 for no `next` or `/`, the path
+    itself for a 「내 계정」 screen, None (no such login) for anything else (#126)."""
+    path = urlsplit(next_url or "").path
+    if path in ("", "/"):
+        return ACCOUNT_HOME
+    if path in ACCOUNT_PATHS and next_url:
+        return next_url
+    return None
 
 
 def pending_signup(profile: ExternalProfile, next_url: str) -> PendingSignup:
