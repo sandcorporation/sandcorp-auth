@@ -17,11 +17,11 @@ live here.
   owner keeps its password + TOTP, so it may remove all). The owner's views ask for a recent
   password + TOTP first (`services.step_up`).
 - Social buttons show where `social_login_allowed(next)`: the login is for an `/authorize`
-  request of a client that allows members (spec 7). They also show with no app (#126): no
-  `next`, `/` or a 「내 계정」 path (`account_login_next`). That login has purpose "account"
-  and signs into existing accounts only — a new identity gets no account (`create=False`);
-  one whose verified email an account already has gets the same-email notice, which then
-  offers only that account's login (#135, `PendingSignup.may_create`).
+  request of a client that allows members (spec 7). They also show with no app (#126, #138):
+  any other `next` on this host but `/authorize` (`account_login_next`). That login has
+  purpose "account" and signs into existing accounts only — a new identity gets no account
+  (`create=False`); one whose verified email an account already has gets the same-email
+  notice, which then offers only that account's login (#135, `PendingSignup.may_create`).
 """
 
 import base64
@@ -38,6 +38,7 @@ from django.db.models import Q
 from django.db.models.functions import Lower
 
 from accounts.models import ExternalIdentity, Member
+from accounts.session import allows_get
 from adapters.clock import get_clock
 from adapters.randomness import get_randomness
 from services import audit
@@ -57,8 +58,8 @@ PENDING_SECONDS: Final = 10 * 60
 type Purpose = Literal["login", "link", "account"]
 
 ACCOUNT_HOME: Final = "/account"
-# Where a login without an app may go: 「내 계정」 screens (GET), not their actions.
-ACCOUNT_PATHS: Final = frozenset({ACCOUNT_HOME, "/account/identities", "/account/withdraw"})
+# The login's own screens: a login without an app that was headed there lands on 「내 계정」.
+LOGIN_PATHS: Final = frozenset({"", "/", "/login", "/logout", "/signup/confirm"})
 
 
 class PendingSocial(TypedDict):
@@ -368,14 +369,16 @@ def social_login_allowed(next_url: str | None) -> bool:
 
 
 def account_login_next(next_url: str | None) -> str | None:
-    """Where a social login without an app lands: 「내 계정」 for no `next` or `/`, the path
-    itself for a 「내 계정」 screen, None (no such login) for anything else (#126)."""
+    """Where a social login without an app lands (#126, #138), for a `next` already checked
+    by `safe_next`: None (no such login) for `/authorize` — an app's login is
+    `social_login_allowed` or none; 「내 계정」 for no `next`, the login's own screens and a
+    path that does not open with GET; else `next_url` itself."""
     path = urlsplit(next_url or "").path
-    if path in ("", "/"):
+    if path == "/authorize":
+        return None
+    if not next_url or path in LOGIN_PATHS or path.startswith("/login/"):
         return ACCOUNT_HOME
-    if path in ACCOUNT_PATHS and next_url:
-        return next_url
-    return None
+    return next_url if allows_get(path) else ACCOUNT_HOME
 
 
 def pending_signup(
