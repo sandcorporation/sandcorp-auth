@@ -216,9 +216,7 @@ def test_member_consent_for_login_info_has_no_owner_wording_or_scope_names(
 ) -> None:
     oauth_client, _ = members_proxy
     use_https(member_client)
-    url = "/authorize?" + authorize_query(
-        oauth_client, resource=None, scope="openid profile email"
-    )
+    url = "/authorize?" + authorize_query(oauth_client, resource=None, scope="openid profile email")
     page = member_client.get(url).content.decode()
     assert "대표" not in page
     assert "계정 식별자" in page
