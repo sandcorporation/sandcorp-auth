@@ -1,6 +1,5 @@
 """Owner login: password → (TOTP setup | TOTP code) → Django login → `next`."""
 
-import math
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -31,6 +30,7 @@ from services.login import (
     check_password_step,
     check_totp_enrollment,
     check_totp_step,
+    locked_message,
     login_blocked,
     login_failed,
     login_succeeded,
@@ -41,11 +41,6 @@ from services.step_up import is_weak_owner_session, mark_strong
 from services.totp import enrollment_device, is_enrolled, provisioning_uri, qr_svg, secret_of
 
 BACKEND = "django.contrib.auth.backends.ModelBackend"
-
-
-def _locked_message(seconds: int) -> str:
-    when = f"{seconds}초" if seconds < 120 else f"약 {math.ceil(seconds / 60)}분"
-    return f"로그인 시도가 너무 많습니다. {when} 뒤 다시 시도하세요."
 
 
 def _finish(request: HttpRequest, user: User, *, enrolled_now: bool = False) -> HttpResponse:
@@ -86,7 +81,7 @@ def login_view(request: HttpRequest) -> HttpResponse:
             return redirect("accounts:totp_setup")
         if not wait:
             wait = login_failed(audit.LOGIN_PASSWORD_FAILED, username, ip, "password")
-        error = _locked_message(wait) if wait else "아이디 또는 비밀번호가 맞지 않습니다."
+        error = locked_message(wait) if wait else "아이디 또는 비밀번호가 맞지 않습니다."
     context = {
         "error": error,
         "username": username,
@@ -113,7 +108,7 @@ def login_totp_view(request: HttpRequest) -> HttpResponse:
         if not wait:
             wait = login_failed(audit.LOGIN_TOTP_FAILED, username, ip, "totp")
         error = (
-            _locked_message(wait)
+            locked_message(wait)
             if wait
             else "인증 코드가 맞지 않습니다. 앱에 새로 뜬 코드를 넣어 주세요."
         )
@@ -135,7 +130,7 @@ def totp_setup_view(request: HttpRequest) -> HttpResponse:
         if not wait:
             wait = login_failed(audit.LOGIN_TOTP_FAILED, username, ip, "enrollment")
         error = (
-            _locked_message(wait)
+            locked_message(wait)
             if wait
             else "인증 코드가 맞지 않습니다. 시계가 맞는지 확인하고 새 코드를 넣어 주세요."
         )
