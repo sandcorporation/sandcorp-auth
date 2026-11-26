@@ -119,14 +119,23 @@ def test_failures_from_one_ip_lock_that_ip_across_usernames(
 def test_forwarded_for_is_trusted_only_when_configured(
     client: Client, owner: User, frozen_clock: FrozenClock
 ) -> None:
-    with override_settings(TRUST_X_FORWARDED_FOR=True):
+    # One trusted proxy: the entry it appended (rightmost), not what the caller sent before it.
+    with override_settings(TRUST_X_FORWARDED_FOR=1):
         client.post(
             "/login",
             {"username": "nobody", "password": "wrong password!!"},
             REMOTE_ADDR="172.17.0.1",
-            HTTP_X_FORWARDED_FOR="203.0.113.7, 172.17.0.1",
+            HTTP_X_FORWARDED_FOR="198.51.100.1, 203.0.113.7",
         )
     assert AuditEvent.objects.get().ip == "203.0.113.7"
+    # Not configured: REMOTE_ADDR.
+    client.post(
+        "/login",
+        {"username": "nobody", "password": "wrong password!!"},
+        REMOTE_ADDR="172.17.0.1",
+        HTTP_X_FORWARDED_FOR="198.51.100.1, 203.0.113.7",
+    )
+    assert AuditEvent.objects.latest("id").ip == "172.17.0.1"
 
 
 def test_login_events_are_audited_without_secrets(

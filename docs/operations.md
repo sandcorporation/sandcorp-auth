@@ -39,7 +39,7 @@ docker compose -p sandcorp-auth -f docker-compose.prod.yml -f docker-compose.ora
 | `SIGNING_KEY_ENCRYPTION_KEY` | 필수 | DB의 서명 개인 키를 암호화하는 Fernet 키. 없으면 기동 실패. **잃으면 서명 키를 못 푼다**(5절) | `docker run --rm sandcorp-auth-web:latest python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`(이미지가 아직 없으면 `cryptography`가 깔린 아무 Python) |
 | `SESSION_AGE_SECONDS` | 선택 | 이 서비스의 로그인 세션 수명(초). 로그인 시각부터 세며 활동해도 늘지 않고 브라우저를 닫아도 유지된다 | 기본 `604800`(7일) |
 | `REFRESH_TOKEN_REUSE_GRACE_SECONDS` | 선택 | 리프레시 토큰 회전 뒤 같은 클라이언트의 같은 토큰을 재사용이 아닌 동시 갱신으로 보는 시간(초). 그 안에는 같은 새 토큰을 다시 준다. `0`이면 유예 없음 | 기본 `30` |
-| `TRUST_X_FORWARDED_FOR` | 선택 | 호출자 IP를 `X-Forwarded-For` 첫 값으로 볼지. 요청 제한·감사 로그의 IP가 여기서 나온다 | NPMplus 뒤라 `1`(기본). 직접 노출할 때만 `0` |
+| `TRUST_X_FORWARDED_FOR` | 선택 | 앞에 선 신뢰 프록시 수 N. 호출자 IP를 `X-Forwarded-For` **오른쪽에서 N번째** 값으로 본다(값이 모자라거나 주소가 아니면 `REMOTE_ADDR`). `0`이면 헤더를 무시한다. 요청 제한·감사 로그의 IP가 여기서 나온다. 예전 표기 `true`는 `1`, `false`는 `0` | 프록시 한 단이라 `1`(기본). 직접 노출할 때만 `0` |
 | `DJANGO_LOG_LEVEL` | 선택 | 루트 로그 수준 | 기본 `INFO` |
 | `GUNICORN_WORKERS` | 선택 | gunicorn 워커 수 | 기본 `2`(web은 cpus 0.6, 512MB) |
 | `DB_HOST` | 필수 | HeatWave 인스턴스의 사설 IP | OCI 콘솔의 DB 시스템 엔드포인트 |
@@ -205,13 +205,13 @@ NPMplus 프록시 호스트:
 | Domain | `auth.sandcorp.co.kr` |
 | Scheme / Forward Host / Port | `http` / `172.17.0.1` / `18093` |
 | SSL | Let's Encrypt, Force SSL 켬, HTTP/2 켬, HSTS는 앱이 보내므로 NPMplus 쪽은 꺼도 된다 |
-| 헤더 | `Host`(원래 값), `X-Forwarded-Proto: https`, `X-Forwarded-For`(호출자 IP가 첫 값) — NPMplus 기본 설정이 넘긴다 |
+| 헤더 | `Host`(원래 값), `X-Forwarded-Proto: https`, `X-Forwarded-For`(프록시가 직접 본 호출자 IP를 맨 뒤에 덧붙인다) — NPMplus 기본 설정이 넘긴다 |
 | 헬스 체크 | `GET /api/health` → 200 `{"status": "ok", "db": "ok", …}`, DB가 죽으면 503 |
 
 전제와 그 이유:
 
 - **`X-Forwarded-Proto: https`가 와야 한다.** settings `SECURE_PROXY_SSL_HEADER`가 이 헤더로 요청을 https로 본다. 없으면 authlib가 OAuth 요청을 http라며 거부하고, HSTS 헤더가 안 붙고, Secure 쿠키를 쓰는 로그인이 깨진다.
-- **`X-Forwarded-For` 첫 값이 실제 호출자 IP여야 한다**(`TRUST_X_FORWARDED_FOR=1`). 요청 제한과 감사 로그 IP가 이 값이다. web 포트는 172.17.0.1에만 묶여 있어 바깥에서 이 헤더를 꾸며 직접 들어올 수 없다.
+- **프록시가 `X-Forwarded-For` 맨 뒤에 자기가 본 호출자 IP를 덧붙여야 한다**(`TRUST_X_FORWARDED_FOR=1` = 프록시 한 단, 맨 오른쪽 값). 그보다 왼쪽 값은 호출자가 보낸 것이라 쓰지 않는다. 프록시를 한 단 더 두면 이 값을 그 수에 맞춘다. 요청 제한과 감사 로그 IP가 이 값이다. web 포트는 172.17.0.1에만 묶여 있어 바깥에서 이 헤더를 꾸며 직접 들어올 수 없다.
 - **`SECURE_SSL_REDIRECT`는 끈다.** TLS 종료와 http→https 리다이렉트는 NPMplus(Force SSL) 몫이다. 켜면 컨테이너 안 헬스 체크(compose healthcheck·`deploy.sh`가 `http://127.0.0.1:8000/api/health`를 부른다)가 301을 받아 배포가 실패한다.
 - 앱이 보내는 보안 헤더(DEBUG 아님): `Strict-Transport-Security: max-age=31536000`(https 요청에만, 서브도메인 미포함·preload 없음 — `sandcorp.co.kr`의 다른 서브도메인에 영향을 주지 않으려고), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`. 세션·CSRF 쿠키는 `Secure`, `SameSite=Lax`(사이트에서 `/authorize`로 넘어오는 최상위 이동에 세션 쿠키가 실려야 하므로 Strict가 아니다).
 - `python manage.py check --deploy`(운영 설정)는 의도한 경고 셋만 남긴다: `security.W005`(HSTS 서브도메인 미포함), `security.W008`(`SECURE_SSL_REDIRECT` 꺼짐 — NPMplus 몫), `security.W021`(HSTS preload 안 함).
