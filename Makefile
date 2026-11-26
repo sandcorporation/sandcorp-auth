@@ -2,7 +2,8 @@
 .PHONY: db test lint typecheck check authkit-test authkit-lint authkit-typecheck dev-backend prod-local prod-local-down sync-design
 
 db:  ## 로컬 시험·개발용 MySQL 26.10 (127.0.0.1:15444, 프로젝트 sandcorp-auth-dev)
-	docker compose up -d --wait db
+	# --no-recreate: 워크트리마다 init SQL 마운트 경로가 달라 공용 컨테이너를 다시 만들지 않게.
+	docker compose up -d --wait --no-recreate db
 
 TEST_CPU_LIMIT ?= 1.0
 export TEST_CPU_LIMIT
