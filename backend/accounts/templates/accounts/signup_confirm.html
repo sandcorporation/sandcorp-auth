@@ -6,8 +6,10 @@
 <div class="auth-stack" data-slot="existing-login">
   {% for c in choices %}{% with verb=c.label|add:"로 로그인" %}{% include "accounts/_social_button.html" with p=c %}{% endwith %}{% endfor %}
 </div>
+{% if may_create %}
 <form method="post" action="/signup/confirm" class="auth-subtle">
   {% csrf_token %}
   <button type="submit" class="sc-btn sc-btn--secondary sc-btn--block" data-slot="new-account">그래도 새 계정 만들기</button>
 </form>
+{% endif %}
 {% endblock %}
