@@ -45,10 +45,10 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
     "accounts.middleware.TotpEnrollmentMiddleware",
     "accounts.middleware.OwnerStepUpMiddleware",
     "accounts.middleware.MethodNotAllowedPageMiddleware",
-    "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 

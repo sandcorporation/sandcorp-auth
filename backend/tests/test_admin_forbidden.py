@@ -61,3 +61,27 @@ def test_relogin_page_masks_email(client: Client, db: None) -> None:
     html = client.get(ADMIN_LOGIN).content.decode()
     assert MEMBER_EMAIL not in html
     assert MEMBER_EMAIL[:2] + "***@" + MEMBER_EMAIL.split("@")[1] in html
+
+
+def test_member_home_shows_readable_name_and_account_link(client: Client, db: None) -> None:
+    member = make_member()
+    client.force_login(member)
+    html = client.get("/").content.decode()
+    assert member.get_username() not in html
+    assert MEMBER_EMAIL not in html
+    assert MEMBER_EMAIL[:2] + "***@" + MEMBER_EMAIL.split("@")[1] in html
+    assert 'href="/account"' in html
+    assert ADMIN not in html
+    assert 'action="/logout"' in html
+
+
+def test_member_home_without_email_names_the_provider(client: Client, db: None) -> None:
+    client.force_login(make_member("kakao", "777", email=""))
+    html = client.get("/").content.decode()
+    assert "Kakao 계정으로" in html
+
+
+def test_owner_home_keeps_the_admin_button(logged_in_client: Client) -> None:
+    html = logged_in_client.get("/").content.decode()
+    assert f'href="{ADMIN}"' in html
+    assert "/account" not in html

@@ -4,6 +4,7 @@ import math
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
@@ -13,7 +14,6 @@ from django.template.loader import render_to_string
 from django.utils.safestring import mark_safe
 from django.views.decorators.http import require_http_methods, require_POST
 
-from accounts.models import ExternalIdentity
 from accounts.session import (
     NEXT_KEY,
     PENDING_USER_KEY,
@@ -33,6 +33,7 @@ from services.login import (
     login_failed,
     login_succeeded,
 )
+from services.members import account_label, is_member
 from services.step_up import is_weak_owner_session, mark_strong
 from services.totp import enrollment_device, is_enrolled, provisioning_uri, qr_svg, secret_of
 
@@ -88,6 +89,7 @@ def login_view(request: HttpRequest) -> HttpResponse:
         "username": username,
         "next": next_url or "",
         "step_up": step_up,
+        "notices": [m.message for m in messages.get_messages(request)],
         "social": [] if step_up else social_buttons(next_url),
     }
     return render(request, "accounts/login.html", context)
@@ -157,15 +159,14 @@ def logout_view(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def home_view(request: HttpRequest) -> HttpResponse:
-    return render(request, "accounts/home.html", {"admin_path": "/" + settings.ADMIN_PATH})
-
-
-def _mask_email(email: str) -> str:
-    """`ab***@example.com`: keep the first two characters of the local part."""
-    local, at, domain = email.partition("@")
-    if not at:
-        return ""
-    return local[:2] + "***" + at + domain
+    user = request.user
+    member = isinstance(user, User) and is_member(user)
+    context = {
+        "admin_path": "/" + settings.ADMIN_PATH,
+        "member": member,
+        "who": account_label(user) if member and isinstance(user, User) else "",
+    }
+    return render(request, "accounts/home.html", context)
 
 
 def admin_login_redirect(request: HttpRequest) -> HttpResponse:
@@ -177,12 +178,7 @@ def admin_login_redirect(request: HttpRequest) -> HttpResponse:
         user = request.user
         if user.is_staff:
             return redirect(admin_path)
-        who = ""
-        if isinstance(user, User):
-            identity = user.identities.order_by("id").first()
-            who = _mask_email(user.email) or (
-                ExternalIdentity.Provider(identity.provider).label if identity else ""
-            )
+        who = account_label(user) if isinstance(user, User) else ""
         context = {"who": who, "relogin_next": "/login?" + urlencode({"next": admin_path})}
         return render(request, "accounts/admin_forbidden.html", context, status=403)
     next_url = safe_next(request, request.GET.get("next")) or admin_path

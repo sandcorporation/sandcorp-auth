@@ -2,13 +2,14 @@ from collections.abc import Callable
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth import logout
 from django.contrib.auth.models import User
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import redirect
 from django.urls import reverse
 
-from accounts.session import pending_user
+from accounts.session import OWNER_ENROLLMENT_NOTICE, pending_user
 from services.members import is_member
 from services.step_up import is_weak_owner_session
 from services.totp import is_enrolled
@@ -32,6 +33,7 @@ class TotpEnrollmentMiddleware:
             and not is_member(user)  # members sign in with a social login, no TOTP
         ):
             logout(request)
+            messages.info(request, OWNER_ENROLLMENT_NOTICE)  # not a silent sign-out (#110)
         pending = pending_user(request)
         if pending is not None and not is_enrolled(pending):
             allowed = {reverse("accounts:totp_setup"), reverse("accounts:logout")}
