@@ -29,8 +29,8 @@
 <ul class="sc-list">
 {% for scope in scopes %}
   <li>
-    <span><span class="sc-list-title auth-scope-name">{{ scope.name }}</span>
-    <span class="auth-meta-text auth-scope-desc">{{ scope.description }}</span></span>
+    <span>{% if is_member %}<span class="sc-list-title">{{ scope.description }}</span>{% else %}<span class="sc-list-title auth-scope-name">{{ scope.name }}</span>
+    <span class="auth-meta-text auth-scope-desc">{{ scope.description }}</span>{% endif %}</span>
     {% if scope.granted %}<span class="sc-list-meta">이미 허락함</span>{% endif %}
   </li>
 {% endfor %}
