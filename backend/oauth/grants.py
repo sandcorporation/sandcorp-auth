@@ -11,7 +11,9 @@ grant to the internal login info resource, with one they ride along. The `nonce`
 code for the ID token.
 
 At the token endpoint the code is claimed atomically (`used_at`), a `resource` sent there must
-equal the code's, and the access token's `aud` is the code's resource. A used code that comes
+equal the code's, and the access token's `aud` is the code's resource. A code whose consent has
+been revoked is dead (#111): it is not found, and the exchange holds the consent's row lock
+while it stores tokens, so a revocation cannot slip in between. A used code that comes
 back revokes the refresh token family its consent opened (`oauth.tokens.report_code_reuse`).
 
 `SandcorpRefreshTokenGrant` rotates refresh tokens: every refresh returns a new refresh token in
@@ -54,6 +56,7 @@ from oauth.tokens import (
     access_token_jti,
     find_refresh_token,
     graced_successor,
+    lock_live_consent,
     report_code_reuse,
     revoke_family,
     successor_refresh_token,
@@ -196,7 +199,12 @@ def find_authorization_code(code: str, client: Client) -> AuthorizationCode | No
     """The unused, unexpired code issued to `client`, or None."""
     found = (
         AuthorizationCode.objects.select_related("user", "resource", "consent")
-        .filter(code_hash=hash_code(code), client=client, used_at__isnull=True)
+        .filter(
+            code_hash=hash_code(code),
+            client=client,
+            used_at__isnull=True,
+            consent__revoked_at__isnull=True,  # a revoked consent takes its unused codes along
+        )
         .first()
     )
     if found is None or found.is_expired():
@@ -278,8 +286,12 @@ class SandcorpAuthorizationCodeGrant(AuthorizationCodeGrant):  # type: ignore[mi
 
     def create_token_response(self) -> tuple[int, TokenResponse, Headers]:
         code: AuthorizationCode = self.request.authorization_code
-        # Claim the code first, so two concurrent exchanges cannot both get tokens.
+        # Claim the code first, so two concurrent exchanges cannot both get tokens. The consent
+        # stays locked until the tokens are stored: a revocation either comes first (the code is
+        # dead) or waits and then revokes the family this exchange opens.
         with transaction.atomic():
+            if not lock_live_consent(code.consent):
+                raise InvalidGrantError("Invalid 'code' in request.")
             claimed = AuthorizationCode.objects.filter(pk=code.pk, used_at__isnull=True).update(
                 used_at=get_clock().now()
             )
