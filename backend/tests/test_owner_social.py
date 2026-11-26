@@ -121,6 +121,16 @@ def test_owner_links_kakao_from_the_account_page(
     assert not ExternalIdentity.objects.filter(user=owner).exists()
 
 
+def test_owner_replaying_the_social_callback_returns_to_the_app(
+    social_owner: Client, members_app: OAuthClient
+) -> None:
+    query = {"state": "x", "code": "the-code"}
+    again = social_owner.get("/login/kakao/callback?" + urlencode(query))
+    assert again.status_code == 302
+    assert again["Location"] == member_level_url(members_app)
+    assert not AuditEvent.objects.filter(kind=audit.SOCIAL_LOGIN_FAILED).exists()
+
+
 def test_social_session_must_step_up_before_changing_sign_in_methods(
     social_owner: Client,
 ) -> None:

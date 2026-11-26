@@ -6,8 +6,10 @@
 <div class="sc-alert auth-alert" role="status"><span class="sc-alert-title">안내</span>로그인을 취소했습니다.</div>
 {% elif reason == "locked" %}
 <div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">잠시 멈춤</span>로그인 시도가 너무 많습니다. 잠시 뒤 다시 시도하세요.</div>
-{% elif reason == "pending_login_expired" or reason == "no_pending_login" %}
+{% elif reason == "pending_login_expired" %}
 <div class="sc-alert auth-alert" role="status"><span class="sc-alert-title">안내</span>로그인 시간이 지났습니다. 처음부터 다시 시도하세요.</div>
+{% elif reason == "no_pending_login" %}
+<div class="sc-alert auth-alert" role="status"><span class="sc-alert-title">안내</span>진행 중인 로그인이 없습니다. 로그인을 처음부터 다시 시작하세요.</div>
 {% else %}
 <div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">오류</span>로그인 제공자의 응답을 확인하지 못했습니다. 처음부터 다시 시도하세요.</div>
 {% endif %}

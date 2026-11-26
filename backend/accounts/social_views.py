@@ -30,7 +30,9 @@ from services.members import (
     member_email_verified,
     set_member_email,
 )
+from adapters.clock import get_clock
 from services.social import (
+    PENDING_SECONDS,
     IdentityNotFound,
     LastIdentity,
     NotAMember,
@@ -56,6 +58,9 @@ from services.withdrawal import CONFIRM_PHRASE, withdraw_member
 BACKEND = "django.contrib.auth.backends.ModelBackend"
 PENDING_SOCIAL_KEY = "accounts.social_pending"
 PENDING_SIGNUP_KEY = "accounts.social_signup"
+# Where the login that just finished was headed, kept as long as a pending login lives, so a
+# second callback (back button, picking again) lands there instead of on a failure page (#123).
+JUST_SIGNED_IN_KEY = "accounts.social_signed_in"
 # Provider answers that mean "the person said no", not an attack: no throttle count.
 CANCELLED = frozenset({"access_denied", "consent_required", "interaction_required"})
 
@@ -91,11 +96,29 @@ def _sign_into(request: HttpRequest, user: User, next_url: str) -> HttpResponse:
         return redirect(_login_url(next_url))
     login(request, user, backend=BACKEND)  # also sets last_login, the ID token's auth_time
     drop_strong(request)  # a social login never opens the owner's admin and grants (#100)
+    request.session[JUST_SIGNED_IN_KEY] = {
+        "next": next_url,
+        "at": get_clock().now().timestamp(),
+    }
     if needs_terms(user):  # a new account, or a new version of the terms (#37)
         return (
             redirect("/terms?" + urlencode({"next": next_url})) if next_url else redirect("/terms")
         )
     return redirect(next_url or "accounts:home")
+
+
+def _just_signed_in_next(request: HttpRequest) -> str:
+    """The `next` of the login that finished a moment ago in this session, or ""."""
+    note = request.session.get(JUST_SIGNED_IN_KEY)
+    if not isinstance(note, dict):
+        return ""
+    started, target = note.get("at"), note.get("next")
+    if not isinstance(started, int | float) or not isinstance(target, str):
+        return ""
+    age = get_clock().now().timestamp() - started
+    if not 0 <= age <= PENDING_SECONDS:
+        return ""
+    return safe_next(request, target) or ""
 
 
 def _failed(
@@ -123,6 +146,9 @@ def social_callback(request: HttpRequest, provider: str) -> HttpResponse:
     social = _provider_or_404(provider)
     ip = client_ip(request)
     raw = request.session.pop(PENDING_SOCIAL_KEY, None)  # one callback per start
+    if raw is None and request.user.is_authenticated:
+        # The login already finished (back button, picking again): not a failure (#123).
+        return redirect(_just_signed_in_next(request) or "accounts:home")
     next_url = raw.get("next", "") if isinstance(raw, dict) else ""
     next_url = next_url if isinstance(next_url, str) else ""
     ip_key = f"ip:{ip}"
