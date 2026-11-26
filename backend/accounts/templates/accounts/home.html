@@ -12,6 +12,7 @@
   <a class="sc-btn sc-btn--accent sc-btn--block" href="{% url 'accounts:account' %}">내 계정</a>
   {% else %}
   <a class="sc-btn sc-btn--accent sc-btn--block" href="{{ admin_path }}">관리 화면으로</a>
+  <a class="sc-btn sc-btn--secondary sc-btn--block" href="{% url 'accounts:account' %}">내 계정</a>
   {% endif %}
   <form method="post" action="/logout">{% csrf_token %}<button class="sc-btn sc-btn--secondary sc-btn--block" type="submit">로그아웃</button></form>
 </div>

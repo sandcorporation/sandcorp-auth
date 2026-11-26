@@ -493,7 +493,7 @@ def test_cancelling_at_the_provider_is_not_counted_as_an_attack(
 # --- which login screen shows the buttons --------------------------------------------------
 
 
-def test_social_buttons_show_only_for_a_client_that_allows_members(
+def test_social_buttons_show_for_a_client_that_allows_members(
     client: Client, members_app: OAuthClient, next_url: str
 ) -> None:
     page = client.get("/login?" + urlencode({"next": next_url})).content.decode()
@@ -505,7 +505,8 @@ def test_social_buttons_show_only_for_a_client_that_allows_members(
     page = client.get("/login?" + urlencode({"next": next_url})).content.decode()
     assert "data-provider" not in page
     assert 'name="password"' in page
-    assert "data-provider" not in client.get("/login").content.decode()
+    # With no app the buttons sign in to 「내 계정」 (#126, tests/test_account_direct_login.py).
+    assert "next=%2Faccount" in client.get("/login").content.decode()
 
 
 def test_the_start_route_refuses_a_client_that_does_not_allow_members(
@@ -515,7 +516,6 @@ def test_the_start_route_refuses_a_client_that_does_not_allow_members(
     response = client.get("/login/google?" + urlencode({"next": next_url}))
     assert response.status_code == 302
     assert response["Location"].startswith("/login?")
-    assert client.get("/login/google").status_code == 302  # no next: back to /login
 
 
 @pytest.mark.parametrize(
