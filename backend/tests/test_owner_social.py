@@ -376,3 +376,33 @@ def test_merge_takes_a_member_into_the_owner_only(
     names = {"owner": OWNER_USERNAME, "member": member.username}
     with pytest.raises(MergeRefused):
         merge_member_into_owner(names[source], names[target])
+
+
+def test_owner_social_login_before_totp_enrollment_explains_instead_of_signing_out(
+    owner: User,
+    members_app: OAuthClient,
+    fake_providers: FakeProviders,
+    client: Client,
+) -> None:
+    link_owner_kakao(owner)
+    use_https(client)
+    response = kakao_login(
+        client, fake_providers, member_level_url(members_app), kakao_user(OWNER_KAKAO_ID)
+    )
+    assert response.status_code == 302
+    assert response["Location"].startswith("/login")
+    assert session_user(client) is None  # a social session never opens TOTP enrollment
+    assert client.get("/totp/setup").status_code == 302
+    html = client.get(response["Location"]).content.decode()
+    assert "OTP 등록을 먼저 마쳐야 합니다" in html
+    assert 'data-slot="login-notice"' in html
+
+
+def test_session_after_reset_totp_ends_with_a_notice(logged_in_client: Client) -> None:
+    call_command("owner", "reset-totp", stdout=StringIO())
+    response = logged_in_client.get("/")
+    assert response.status_code == 302
+    assert session_user(logged_in_client) is None
+    html = logged_in_client.get("/login").content.decode()
+    assert "OTP 등록을 먼저 마쳐야 합니다" in html
+    assert "OTP 등록을 먼저" not in logged_in_client.get("/login").content.decode()  # shown once

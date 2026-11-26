@@ -9,6 +9,9 @@ from django.contrib.auth.models import User
 from django.http import HttpRequest
 from django.utils.http import url_has_allowed_host_and_scheme
 
+OWNER_ENROLLMENT_NOTICE = (
+    "대표 계정은 비밀번호와 OTP 등록을 먼저 마쳐야 합니다. 비밀번호로 로그인해 OTP를 등록해 주세요."
+)
 PENDING_USER_KEY = "accounts.pending_user_id"
 NEXT_KEY = "accounts.next"
 

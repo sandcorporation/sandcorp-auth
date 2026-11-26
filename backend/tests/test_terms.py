@@ -190,6 +190,22 @@ def test_no_documents_means_no_signup(
     assert needs_terms(pending)
 
 
+def test_unavailable_screen_offers_logout_and_home(
+    pending_client: Client, pending: User, members_app: OAuthClient
+) -> None:
+    TermsDocument.objects.all().delete()
+    plain = pending_client.get("/terms").content.decode()
+    assert 'action="/logout"' in plain
+    assert "csrfmiddlewaretoken" in plain
+    assert ">홈으로<" not in plain
+    response = pending_client.get("/terms?next=%2Fauthorize%3Fx%3D1")
+    assert response.status_code == 503
+    html = response.content.decode()
+    assert 'href="/">홈으로<' in html
+    assert 'action="/logout"' in html
+    assert "/authorize" not in html
+
+
 def test_offsite_next_is_dropped(pending_client: Client) -> None:
     response = agree(pending_client, "https://evil.example/")
     assert response.status_code == 302
