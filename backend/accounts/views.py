@@ -4,6 +4,7 @@ import math
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
@@ -80,6 +81,7 @@ def login_view(request: HttpRequest) -> HttpResponse:
         "username": username,
         "next": next_url or "",
         "step_up": step_up,
+        "notices": [m.message for m in messages.get_messages(request)],
         "social": [] if step_up else social_buttons(next_url),
     }
     return render(request, "accounts/login.html", context)

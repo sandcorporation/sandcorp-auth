@@ -16,7 +16,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from accounts.models import ExternalIdentity
-from accounts.session import safe_next
+from accounts.session import OWNER_ENROLLMENT_NOTICE, safe_next
 from core.http import client_ip
 from services import audit, throttle
 from services.consents import connected_apps, disconnect_app
@@ -50,6 +50,7 @@ from services.social import (
 from services.social_providers import SocialLoginFailed, SocialProvider, configured_providers
 from services.step_up import drop_strong, is_weak_owner_session
 from services.terms import needs_terms
+from services.totp import is_enrolled
 from services.withdrawal import CONFIRM_PHRASE, withdraw_member
 
 BACKEND = "django.contrib.auth.backends.ModelBackend"
@@ -83,6 +84,11 @@ def _login_url(next_url: str) -> str:
 
 def _sign_into(request: HttpRequest, user: User, next_url: str) -> HttpResponse:
     request.session.pop(PENDING_SIGNUP_KEY, None)
+    if not is_member(user) and not is_enrolled(user):
+        # The owner before TOTP enrollment: enrolling needs the password, never a social
+        # session. Say so on the login screen instead of signing in and out silently (#110).
+        messages.info(request, OWNER_ENROLLMENT_NOTICE)
+        return redirect(_login_url(next_url))
     login(request, user, backend=BACKEND)  # also sets last_login, the ID token's auth_time
     drop_strong(request)  # a social login never opens the owner's admin and grants (#100)
     if needs_terms(user):  # a new account, or a new version of the terms (#37)
