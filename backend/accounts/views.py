@@ -9,6 +9,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
+from django.template.loader import render_to_string
 from django.utils.safestring import mark_safe
 from django.views.decorators.http import require_http_methods, require_POST
 
@@ -208,3 +209,14 @@ def method_not_allowed(request: HttpRequest) -> HttpResponse:
 def forbidden(request: HttpRequest, exception: Exception | None = None) -> HttpResponse:
     """`handler403`: no bare "Forbidden" (an owner on a member-only screen, etc.)."""
     return render(request, "accounts/forbidden.html", status=403)
+
+
+def not_found(request: HttpRequest, exception: Exception | None = None) -> HttpResponse:
+    """`handler404` (#107): the service's page instead of Django's unstyled one."""
+    return render(request, "accounts/not_found.html", status=404)
+
+
+def server_error(request: HttpRequest) -> HttpResponse:
+    """`handler500` (#107): rendered without the request, so no context processor (session,
+    user) touches the database that may be what failed."""
+    return HttpResponse(render_to_string("accounts/server_error.html"), status=500)

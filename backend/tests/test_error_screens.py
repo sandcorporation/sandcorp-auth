@@ -1,6 +1,7 @@
 """#106 (405 page, CSRF retry target) and #107 (404·500 pages in the service's look)."""
 
 import pytest
+from django.conf import settings
 from django.test import Client, RequestFactory
 
 from tests.conftest import make_member
@@ -68,3 +69,29 @@ def test_csrf_retry_never_leaves_site() -> None:
         request = RequestFactory().post("/")
         request.path = request.path_info = path
         assert _csrf_retry(csrf_failure(request).content.decode()) == "/"
+
+
+def test_unknown_path_gets_404_page(client: Client, db: None) -> None:
+    response = client.get("/no-such-page")
+    assert response.status_code == 404
+    html = response.content.decode()
+    assert html.count("<h1") == 1
+    assert 'href="/"' in html
+    assert "sc-masthead" in html
+
+
+def test_admin_unknown_path_gets_same_404(logged_in_client: Client) -> None:
+    response = logged_in_client.get("/" + settings.ADMIN_PATH + "no-such-app/")
+    assert response.status_code == 404
+    assert "sc-masthead" in response.content.decode()
+
+
+def test_500_page_without_database() -> None:
+    """No `db` fixture: any query here raises."""
+    from accounts.views import server_error
+
+    response = server_error(RequestFactory().get("/"))
+    assert response.status_code == 500
+    html = response.content.decode()
+    assert html.count("<h1") == 1
+    assert 'href="/"' in html
