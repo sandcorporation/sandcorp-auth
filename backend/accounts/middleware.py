@@ -4,7 +4,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.contrib.auth import logout
 from django.contrib.auth.models import User
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import redirect
 from django.urls import reverse
 
@@ -54,3 +54,26 @@ class OwnerStepUpMiddleware:
             target = request.get_full_path() if request.method == "GET" else admin_path
             return redirect("/login?" + urlencode({"next": target}))
         return self.get_response(request)
+
+
+class MethodNotAllowedPageMiddleware:
+    """A browser that GETs a POST-only path (`/logout`, `/account/email`, ...) gets a page in the
+    service's look instead of Django's empty 405 (#106). Status and `Allow` stay; a client
+    that does not ask for HTML (the token endpoint's callers) keeps the bare response."""
+
+    def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
+        self.get_response = get_response
+
+    def __call__(self, request: HttpRequest) -> HttpResponse:
+        response = self.get_response(request)
+        if (
+            not isinstance(response, HttpResponseNotAllowed)
+            or response.content
+            or "text/html" not in request.headers.get("accept", "")
+        ):
+            return response
+        from accounts.views import method_not_allowed
+
+        page = method_not_allowed(request)
+        page["Allow"] = response["Allow"]
+        return page

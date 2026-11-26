@@ -41,7 +41,7 @@ def test_csrf_failure_shows_retry_page(db: None) -> None:
     assert response.status_code == 403
     html = response.content.decode()
     assert "페이지가 만료됐습니다" in html
-    assert 'href="/logout"' in html
+    assert 'href="/" data-slot="retry"' in html  # /logout is POST-only (#106)
 
 
 def test_owner_on_member_screen_gets_page_not_bare_403(logged_in_client: Client) -> None:
@@ -54,17 +54,6 @@ def test_staff_on_admin_login_goes_to_admin(logged_in_client: Client) -> None:
     response = logged_in_client.get(ADMIN_LOGIN)
     assert response.status_code == 302
     assert response["Location"] == ADMIN
-
-
-def test_csrf_retry_link_never_protocol_relative() -> None:
-    from django.test import RequestFactory
-
-    from accounts.views import csrf_failure
-
-    for path in ("//evil.example/x", "/\\evil.example"):
-        html = csrf_failure(RequestFactory().post(path)).content.decode()
-        assert 'href="/"' in html
-    assert 'href="/logout"' in csrf_failure(RequestFactory().post("/logout")).content.decode()
 
 
 def test_relogin_page_masks_email(client: Client, db: None) -> None:

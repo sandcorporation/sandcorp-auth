@@ -47,6 +47,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "accounts.middleware.TotpEnrollmentMiddleware",
     "accounts.middleware.OwnerStepUpMiddleware",
+    "accounts.middleware.MethodNotAllowedPageMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]

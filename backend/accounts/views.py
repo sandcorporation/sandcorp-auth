@@ -13,7 +13,14 @@ from django.utils.safestring import mark_safe
 from django.views.decorators.http import require_http_methods, require_POST
 
 from accounts.models import ExternalIdentity
-from accounts.session import NEXT_KEY, PENDING_USER_KEY, pending_user, safe_next
+from accounts.session import (
+    NEXT_KEY,
+    PENDING_USER_KEY,
+    allows_get,
+    pending_user,
+    safe_next,
+    same_origin_referer,
+)
 from accounts.social_views import social_buttons
 from core.http import client_ip
 from services import audit
@@ -182,10 +189,20 @@ def admin_login_redirect(request: HttpRequest) -> HttpResponse:
 
 
 def csrf_failure(request: HttpRequest, reason: str = "") -> HttpResponse:
-    """`CSRF_FAILURE_VIEW`: a page-expired screen; retry is a plain GET of the same path."""
-    path = request.path
-    retry = path if path.startswith("/") and not path.startswith(("//", "/\\")) else "/"
-    return render(request, "accounts/csrf_failed.html", {"retry": retry}, status=403)
+    """`CSRF_FAILURE_VIEW`: a page-expired screen whose retry is a plain GET (#106): the same
+    path with its query when that path answers GET (the consent screen keeps its client,
+    redirect, scope and state), else the same-origin page that sent the form, else home."""
+    retry = None
+    if allows_get(request.path_info):
+        retry = safe_next(request, request.get_full_path())
+    if retry is None:
+        retry = same_origin_referer(request)
+    return render(request, "accounts/csrf_failed.html", {"retry": retry or "/"}, status=403)
+
+
+def method_not_allowed(request: HttpRequest) -> HttpResponse:
+    """The page `accounts.middleware.MethodNotAllowedPageMiddleware` puts in a bare 405 (#106)."""
+    return render(request, "accounts/method_not_allowed.html", status=405)
 
 
 def forbidden(request: HttpRequest, exception: Exception | None = None) -> HttpResponse:
