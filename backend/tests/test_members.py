@@ -201,6 +201,16 @@ def test_member_never_gets_admin_or_editor(
     assert not Consent.objects.exists()
 
 
+def test_member_consent_describes_login_as_signing_in_to_the_app(
+    member_client: Client, members_app: OAuthClient
+) -> None:
+    use_https(member_client)
+    url = "/authorize?" + authorize_query(members_app, scope="login")
+    page = member_client.get(url).content.decode()
+    assert f"{members_app.name}에 로그인" in page
+    assert "관리 화면" not in page
+
+
 def test_member_on_an_allowing_client_gets_a_member_access_token(
     member_client: Client, members_app: OAuthClient, member: User, frozen_clock: FrozenClock
 ) -> None:
