@@ -237,6 +237,11 @@ def _consent_screen(
             name__in=grant.scopes,
         ).values_list("name", "description")
     )
+    user = request.user
+    member = isinstance(user, User) and is_member(user)
+    if member and "login" in descriptions:
+        # The stored text is the owner-facing one; a member just signs in to the app.
+        descriptions["login"] = f"{client.name}에 로그인"
     scopes = [
         {"name": name, "description": descriptions[name], "granted": name in granted}
         for name in grant.scopes
@@ -247,8 +252,6 @@ def _consent_screen(
         for scope, label in (("email", "이메일"), ("profile", "이름"))
         if scope in grant.scopes
     ]
-    user = request.user
-    member = isinstance(user, User) and is_member(user)
     if member:
         assert isinstance(user, User)
         account_label = user.first_name or user.email or "Sandcorp 계정"
