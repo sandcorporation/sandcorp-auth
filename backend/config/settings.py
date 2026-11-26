@@ -48,6 +48,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "accounts.middleware.TotpEnrollmentMiddleware",
     "accounts.middleware.OwnerStepUpMiddleware",
+    "accounts.middleware.MethodNotAllowedPageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
@@ -171,9 +172,22 @@ THROTTLE: dict[str, dict[str, int | str]] = {
     # of 1, 2, 4 ... up to 60 seconds; forgotten after 15 minutes without a failure.
     "login_account": {"mode": "backoff", "max_delay_seconds": 60, "window_seconds": 15 * 60},
 }
-# Behind NPMplus the caller's address is the first X-Forwarded-For entry. Set 0 when the app is
-# reached directly (then REMOTE_ADDR is used).
-TRUST_X_FORWARDED_FOR = env("TRUST_X_FORWARDED_FOR", "1") == "1"
+
+
+def trusted_proxy_count(raw: str) -> int:
+    """`TRUST_X_FORWARDED_FOR`: how many proxies in front append to X-Forwarded-For. The caller's
+    address is the entry that many places from the right (`core.http.client_ip`). `true`/`yes`
+    read as 1, `false`/`no`/empty/anything else as 0 (REMOTE_ADDR only)."""
+    value = raw.strip().lower()
+    if value in {"true", "yes", "on"}:
+        return 1
+    if value.isdigit():
+        return int(value)
+    return 0
+
+
+# One proxy in front (the default). Set 0 when the app is reached directly.
+TRUST_X_FORWARDED_FOR = trusted_proxy_count(env("TRUST_X_FORWARDED_FOR", "1"))
 
 # Django admin lives on a hard-to-guess path in production.
 ADMIN_PATH = env("DJANGO_ADMIN_PATH", "admin/").strip("/") + "/"
