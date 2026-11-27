@@ -7,6 +7,7 @@ from django.db.models import QuerySet
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.urls import URLPattern, path, reverse
+from django.views.decorators.http import require_POST
 
 from core.http import client_ip
 from oauth.models import (
@@ -276,14 +277,16 @@ class ClientAdmin(_ClientAdmin):
     def get_urls(self) -> list[URLPattern]:
         rotate = path(
             "<int:object_id>/rotate-secret/",
-            self.admin_site.admin_view(self.rotate_secret_view),
+            self.admin_site.admin_view(require_POST(self.rotate_secret_view)),
             name="oauth_client_rotate_secret",
         )
         rotate_webhook = path(
             "<int:object_id>/rotate-webhook-secret/",
-            self.admin_site.admin_view(self.rotate_webhook_secret_view),
+            self.admin_site.admin_view(require_POST(self.rotate_webhook_secret_view)),
             name="oauth_client_rotate_webhook_secret",
         )
+        # `require_POST` (not only the check inside) so a CSRF failure's retry sees these are
+        # POST only (`accounts.session.allows_get`, #145).
         return [rotate, rotate_webhook, *super().get_urls()]
 
     def rotate_webhook_secret_view(self, request: HttpRequest, object_id: int) -> HttpResponse:
