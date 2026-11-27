@@ -154,7 +154,7 @@ def test_the_notice_lists_logins_in_the_order_they_were_linked(
 ) -> None:
     same_email_member()
     page = github_same_email(client, fake_providers, next_url)
-    assert "이전에 Kakao · Google로 가입하셨습니다" in page
+    assert "이전에 카카오 · Google로 가입하셨습니다" in page
     assert page.index('data-provider="kakao"') < page.index('data-provider="google"')
 
 

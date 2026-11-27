@@ -78,7 +78,7 @@ def test_member_home_shows_readable_name_and_account_link(client: Client, db: No
 def test_member_home_without_email_names_the_provider(client: Client, db: None) -> None:
     client.force_login(make_member("kakao", "777", email=""))
     html = client.get("/").content.decode()
-    assert "Kakao 계정으로" in html
+    assert "카카오 계정으로" in html
 
 
 def test_owner_home_keeps_the_admin_button(logged_in_client: Client) -> None:

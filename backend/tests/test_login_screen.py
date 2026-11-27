@@ -4,7 +4,9 @@ reuse, which messages the screen shows, the logout notice, a `next` that GET can
 import re
 
 import pytest
+from django.contrib import messages
 from django.contrib.auth.models import User
+from django.http import HttpRequest, HttpResponse
 from django.test import Client
 
 from oauth.models import Client as OAuthClient
@@ -13,6 +15,7 @@ from tests.conftest import (
     OWNER_USERNAME,
     FakeProviders,
     FrozenClock,
+    make_member,
     totp_code,
     use_https,
 )
@@ -184,3 +187,87 @@ def test_password_login_next_that_get_cannot_open_lands_home(
     )
     response = client.post("/totp/setup", {"code": totp_code(owner)})
     assert response["Location"] == lands
+
+
+# 8. A logout or a login leaves nothing of the account before (#152).
+
+
+def _messages_shown(html: str) -> list[str]:
+    return re.findall(r'role="status"[^>]*>(?:<span[^>]*>[^<]*</span>)?([^<]*)', html)
+
+
+def test_logout_drops_the_previous_accounts_messages(member_client: Client, member: User) -> None:
+    member_client.post("/account/email", {"email": "left@example.com"})  # never shown
+    response = member_client.post("/logout")
+    html = member_client.get(response["Location"]).content.decode()
+    assert "left@example.com" not in html
+    assert _messages_shown(html) == ["로그아웃했습니다."]
+    member_client.force_login(make_member("kakao", "1520001", email=""))
+    assert "left@example.com" not in member_client.get("/account").content.decode()
+
+
+def test_admin_logout_drops_messages_and_says_so(logged_in_client: Client) -> None:
+    from django.conf import settings
+    from django.contrib.messages.storage.cookie import CookieStorage
+
+    request = HttpRequest()
+    storage = CookieStorage(request)
+    storage.add(messages.SUCCESS, "앞 사람의 알림 left@example.com")
+    response_cookie = HttpResponse()
+    storage.update(response_cookie)
+    logged_in_client.cookies[CookieStorage.cookie_name] = response_cookie.cookies[
+        CookieStorage.cookie_name
+    ].value
+    response = logged_in_client.post("/" + settings.ADMIN_PATH + "logout/")
+    assert response.status_code == 302 and response["Location"] == "/login"
+    html = logged_in_client.get("/login").content.decode()
+    assert "left@example.com" not in html
+    assert _messages_shown(html) == ["로그아웃했습니다."]
+
+
+def test_login_drops_messages_left_by_an_expired_session(
+    member_client: Client, owner: User, frozen_clock: FrozenClock
+) -> None:
+    from django.conf import settings
+
+    member_client.post("/account/email", {"email": "left@example.com"})
+    del member_client.cookies[settings.SESSION_COOKIE_NAME]  # the session ran out
+    member_client.post("/login", {"username": OWNER_USERNAME, "password": OWNER_PASSWORD})
+    member_client.post("/totp/setup", {"code": totp_code(owner)})
+    assert "left@example.com" not in member_client.get("/account").content.decode()
+
+
+# 9. After a logout the focus is on the notice, the only autofocus on the screen (#152).
+
+
+def test_logout_notice_takes_the_focus(logged_in_client: Client) -> None:
+    response = logged_in_client.post("/logout")
+    html = logged_in_client.get(response["Location"]).content.decode()
+    assert html.count("autofocus") == 1
+    assert re.search(r'data-slot="login-notice"[^>]*tabindex="-1"[^>]*autofocus', html)
+    assert not username_autofocus(html)
+    assert username_autofocus(login_page(logged_in_client))  # no notice: the username again
+
+
+# 10. The folded administrator login opens with a 44px row (#152).
+
+
+def test_owner_login_summary_is_a_44px_row() -> None:
+    from pathlib import Path
+
+    css = (Path(__file__).resolve().parents[1] / "static" / "auth.css").read_text()
+    rule = re.search(r"\.auth-details summary \{([^}]*)\}", css)
+    assert rule and "min-height: 2.75rem" in rule.group(1)
+
+
+# 11. One login screen looks its app up once (#152).
+
+
+def test_login_screen_looks_up_its_client_once(client: Client) -> None:
+    from audit.models import AuditEvent
+    from services import audit
+
+    use_https(client)
+    next_url = "/authorize?client_id=https://ex%C3%A4mple.com/client.json&response_type=code"
+    assert client.get("/login", {"next": next_url}).status_code == 200
+    assert AuditEvent.objects.filter(kind=audit.CLIENT_CIMD_REJECTED).count() == 1

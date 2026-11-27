@@ -108,7 +108,7 @@ def test_social_login_without_an_app_signs_in_existing_accounts_only(
         assert response.status_code == 302, response.content
         assert response["Location"] == "/signup/confirm"
         body = client.get("/signup/confirm").content.decode().replace("&amp;", "&")
-        assert "이전에 Kakao로 가입하셨습니다" in body
+        assert "이전에 카카오로 가입하셨습니다" in body
         assert 'href="/login/kakao?' + urlencode({"next": button_next}) + '"' in body
         assert 'data-slot="new-account"' not in body
         assert "_auth_user_id" not in client.session
@@ -164,4 +164,4 @@ def test_no_new_account_from_the_same_email_notice_without_an_app(
     assert "_auth_user_id" not in client.session
     assert AuditEvent.objects.filter(kind=audit.MEMBER_CREATED).count() == created_before
     # The notice is still there, with the existing login.
-    assert "이전에 Kakao로 가입하셨습니다" in client.get("/signup/confirm").content.decode()
+    assert "이전에 카카오로 가입하셨습니다" in client.get("/signup/confirm").content.decode()

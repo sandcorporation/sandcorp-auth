@@ -40,7 +40,7 @@ from services.login import (
     totp_code_reused,
 )
 from services.members import account_label, is_member
-from services.social import authorize_client, social_login_allowed
+from services.social import authorize_client, members_may_sign_in
 from services.step_up import is_weak_owner_session, mark_strong
 from services.totp import enrollment_device, is_enrolled, provisioning_uri, qr_svg, secret_of
 
@@ -91,19 +91,25 @@ def login_view(request: HttpRequest) -> HttpResponse:
             wait = login_failed(audit.LOGIN_PASSWORD_FAILED, username, ip, "password")
         error = locked_message(wait) if wait else "아이디 또는 비밀번호가 맞지 않습니다."
     notices = take_login_notices(request)
-    signs_up = social_login_allowed(next_url)
-    app = authorize_client(next_url)
+    app = authorize_client(next_url)  # once: a metadata document URL may be fetched (#152)
+    signs_up = members_may_sign_in(app)
+    social = [] if step_up else social_buttons(next_url, app)
+    owner_open = bool(error or username) or not signs_up or OWNER_ENROLLMENT_NOTICE in notices
+    # One autofocus: the logout notice when there is one, else the open owner form (#152).
+    focus_notice = LOGGED_OUT_NOTICE in notices
     context = {
         "error": error,
         "username": username,
         "next": next_url or "",
         "step_up": step_up,
         "notices": notices,
-        "social": [] if step_up else social_buttons(next_url),
+        "social": social,
         "signs_up": signs_up,
         "app_name": app.name if app is not None else "",
         # Folded only where an app's member login is the screen (#141).
-        "owner_open": bool(error or username) or not signs_up or OWNER_ENROLLMENT_NOTICE in notices,
+        "owner_open": owner_open,
+        "logged_out_notice": LOGGED_OUT_NOTICE,
+        "username_focus": not focus_notice and (not social or owner_open),
     }
     return render(request, "accounts/login.html", context)
 

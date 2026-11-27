@@ -7,7 +7,6 @@ session passed password + TOTP is `services.step_up.has_strong_auth`.
 
 import inspect
 from collections.abc import Callable
-from typing import Final
 from urllib.parse import urlsplit
 
 from django.contrib import messages
@@ -26,13 +25,18 @@ LOGGED_OUT_NOTICE = "로그아웃했습니다."
 LOGIN_MESSAGE_TAG = "login"
 PENDING_USER_KEY = "accounts.pending_user_id"
 NEXT_KEY = "accounts.next"
-# Views that answer POST only without a `require_POST` wrapper to see: the admin's logout runs
-# Django's `LogoutView` (POST only) inside a plain `AdminSite.logout` method (#145).
-POST_ONLY_VIEW_NAMES: Final = frozenset({"admin:logout"})
 
 
 def add_login_notice(request: HttpRequest, text: str) -> None:
     messages.info(request, text, extra_tags=LOGIN_MESSAGE_TAG)
+
+
+def drop_messages(request: HttpRequest) -> None:
+    """Forget every message queued so far (the cookie goes with the response): a logout or a
+    login starts with nothing the account before left unread (#152)."""
+    storage = messages.get_messages(request)
+    for _ in storage:
+        pass
 
 
 def take_login_notices(request: HttpRequest) -> list[str]:
@@ -78,13 +82,11 @@ def same_origin_referer(request: HttpRequest) -> str | None:
 
 def allows_get(path: str) -> bool:
     """Whether the view at `path` answers GET: False for an unknown path, a view behind
-    `require_POST` (or `require_http_methods` without GET), a class view without `get`, or one
-    of `POST_ONLY_VIEW_NAMES`."""
+    `require_POST` (or `require_http_methods` without GET) or a class view without `get`.
+    The admin's logout is `logout_view` (`config/urls.py`, #152)."""
     try:
         match = resolve(path)
     except Resolver404:
-        return False
-    if match.view_name in POST_ONLY_VIEW_NAMES:
         return False
     view: object = match.func
     view_class = getattr(view, "view_class", None)
