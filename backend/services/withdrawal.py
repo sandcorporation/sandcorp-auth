@@ -120,6 +120,7 @@ def _purge_member(member: Member) -> None:
     user = member.user
     now = get_clock().now()
     with transaction.atomic():
+        lock_account(user.pk)  # the account before the member row (services.locks)
         claimed = Member.objects.filter(pk=member.pk, purged_at__isnull=True).update(
             purged_at=now, email_verified=False
         )

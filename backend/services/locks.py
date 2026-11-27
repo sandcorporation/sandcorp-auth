@@ -11,9 +11,10 @@ a row it inserts (a consent, a family, a token, a terms agreement), and a member
 the account with its tokens. Paths that follow it: a code exchange and the consent check
 (`oauth.tokens.lock_live_consent`), a consent given or replaced (`oauth.views._grant_consent`),
 a consent revoked (`services.consents.revoke_consent`, so also 「연결 끊기」 and admin), a
-refresh token rotated (`oauth.grants`), a withdrawal, a merge, terms agreed, the account email
-set and a social login removed. Rows outside an account (clients, their secrets, webhook
-deliveries, signing keys, throttle counters) are locked on their own and never inside these.
+refresh token rotated (`oauth.grants`), a withdrawal and its purge, a merge, terms agreed, the
+account email set and a social login removed. Rows outside an account (clients, their secrets,
+webhook deliveries, signing keys, throttle counters) are locked on their own and never inside
+these.
 """
 
 from django.contrib.auth.models import User
