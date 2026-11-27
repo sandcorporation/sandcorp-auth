@@ -237,13 +237,11 @@ def providers_with_email(profile: ExternalProfile) -> list[str]:
     users = User.objects.filter(pk__in=member_users, is_active=True).filter(
         Q(pk__in=by_account) | Q(pk__in=by_identity)
     )
-    providers = (
-        ExternalIdentity.objects.filter(user__in=users)
-        .values_list("provider", flat=True)
-        .distinct()
-    )
+    # In the order they were linked, first linked first (#144).
+    providers = ExternalIdentity.objects.filter(user__in=users).order_by("linked_at", "pk")
     labels = dict(ExternalIdentity.Provider.choices)
-    return sorted({str(labels.get(name, name)) for name in providers})
+    ordered = [str(labels.get(i.provider, i.provider)) for i in providers.only("provider")]
+    return list(dict.fromkeys(ordered))
 
 
 def sign_in(
@@ -374,8 +372,8 @@ def account_login_next(next_url: str | None) -> str | None:
     `social_login_allowed` or none; 「내 계정」 for no `next`, the login's own screens and a
     path that does not open with GET; else `next_url` itself."""
     path = urlsplit(next_url or "").path
-    if path == "/authorize":
-        return None
+    if path == "/authorize" or path.startswith("/" + settings.ADMIN_PATH):
+        return None  # the admin signs in with the password + TOTP only (#144)
     if not next_url or path in LOGIN_PATHS or path.startswith("/login/"):
         return ACCOUNT_HOME
     return next_url if allows_get(path) else ACCOUNT_HOME
