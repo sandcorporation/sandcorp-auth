@@ -223,8 +223,9 @@ def identity_owner(profile: ExternalProfile) -> User | None:
 
 
 def providers_with_email(profile: ExternalProfile) -> list[str]:
-    """Labels of the social logins of the members that already have this verified email
-    (as their account email or an identity's email). Empty for an unverified email."""
+    """Provider keys (`ExternalIdentity.provider`) of the social logins of the members that
+    already have this verified email (as their account email or an identity's email), first
+    linked first. Empty for an unverified email."""
     email = profile.email.strip()
     if not email or not profile.email_verified:
         return []
@@ -241,9 +242,7 @@ def providers_with_email(profile: ExternalProfile) -> list[str]:
     )
     # In the order they were linked, first linked first (#144).
     providers = ExternalIdentity.objects.filter(user__in=users).order_by("linked_at", "pk")
-    labels = dict(ExternalIdentity.Provider.choices)
-    ordered = [str(labels.get(i.provider, i.provider)) for i in providers.only("provider")]
-    return list(dict.fromkeys(ordered))
+    return list(dict.fromkeys(i.provider for i in providers.only("provider")))
 
 
 def sign_in(
@@ -369,8 +368,12 @@ def authorize_client(next_url: str | None) -> Client | None:
 def social_login_allowed(next_url: str | None) -> bool:
     """True when `next_url` is an `/authorize` request of an active client that allows
     members: only then may a person sign in (or up) with a social login."""
-    client = authorize_client(next_url)
-    return client is not None and client.allows_members
+    return members_may_sign_in(authorize_client(next_url))
+
+
+def members_may_sign_in(app: Client | None) -> bool:
+    """`social_login_allowed` for the `authorize_client` already looked up."""
+    return app is not None and app.allows_members
 
 
 def account_login_next(next_url: str | None) -> str | None:

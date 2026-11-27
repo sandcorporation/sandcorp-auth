@@ -148,13 +148,20 @@ def mask_email(email: str) -> str:
     return local[:2] + "***" + at + domain
 
 
+# How the screens name each provider (#143, #152): Korean where the service has a Korean name.
+# The login buttons keep each provider's own wording (`_social_button.html`).
+PROVIDER_NAMES: Final = {"google": "Google", "kakao": "카카오", "github": "GitHub"}
+
+
+def provider_name(provider: str) -> str:
+    return PROVIDER_NAMES.get(provider, provider)
+
+
 def account_label(user: User) -> str:
     """A readable, non-secret name for a signed-in account: the masked email, else the label
     of its first login method. Never the opaque `m_…` id."""
     identity = user.identities.order_by("id").first()
-    return mask_email(user.email) or (
-        ExternalIdentity.Provider(identity.provider).label if identity else ""
-    )
+    return mask_email(user.email) or (provider_name(identity.provider) if identity else "")
 
 
 def account_kind(user: User) -> AccountKind:

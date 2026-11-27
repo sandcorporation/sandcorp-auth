@@ -19,6 +19,7 @@ from accounts.models import ExternalIdentity, TermsAgreement
 from accounts.session import OWNER_ENROLLMENT_NOTICE, add_login_notice, safe_next
 from adapters.clock import get_clock
 from core.http import client_ip
+from oauth.models import Client
 from services import audit, throttle
 from services.consents import connected_apps, disconnect_app
 from services.login import IP_RULE, locked_message
@@ -29,6 +30,7 @@ from services.members import (
     InvalidEmail,
     is_member,
     member_email_verified,
+    provider_name,
     set_member_email,
 )
 from services.social import (
@@ -39,17 +41,18 @@ from services.social import (
     NotAMember,
     Purpose,
     account_login_next,
+    authorize_client,
     begin,
     complete,
     link_identity,
     may_link,
+    members_may_sign_in,
     pending_signup,
     provider_named,
     providers_with_email,
     read_pending,
     read_pending_signup,
     sign_in,
-    social_login_allowed,
     unlink_identity,
 )
 from services.social_providers import SocialLoginFailed, SocialProvider, configured_providers
@@ -69,31 +72,22 @@ JUST_SIGNED_IN_KEY = "accounts.social_signed_in"
 # screen (#144). Dropped at the end of a login; a logout flushes the session.
 RECENT_NEXT_KEY = "accounts.social_recent_next"
 # Provider answers that mean "the person said no", not an attack: no throttle count.
-# How the screens name each provider (#143): Korean where the service has a Korean name. The
-# login buttons keep each provider's own wording (`_social_button.html`).
-PROVIDER_NAMES = {"google": "Google", "kakao": "카카오", "github": "GitHub"}
-
-
-def provider_name(provider: str) -> str:
-    return PROVIDER_NAMES.get(provider, provider)
-
-
 CANCELLED = frozenset({"access_denied", "consent_required", "interaction_required"})
 
 
-def social_login_target(next_url: str) -> tuple[Purpose, str] | None:
-    """The kind of social login a login screen for `next_url` offers, and where it lands:
-    sign in (or up) for an app that allows members, sign in to 「내 계정」 with no app (#126),
-    or none."""
-    if social_login_allowed(next_url):
+def social_login_target(next_url: str, app: Client | None) -> tuple[Purpose, str] | None:
+    """The kind of social login a login screen for `next_url` (whose `authorize_client` is
+    `app`) offers, and where it lands: sign in (or up) for an app that allows members, sign in
+    to 「내 계정」 with no app (#126), or none."""
+    if members_may_sign_in(app):
         return "login", next_url
     account_next = account_login_next(next_url)
     return ("account", account_next) if account_next else None
 
 
-def social_buttons(next_url: str | None) -> list[dict[str, str]]:
+def social_buttons(next_url: str | None, app: Client | None) -> list[dict[str, str]]:
     """Buttons for the login screen (see `social_login_target`)."""
-    target = social_login_target(next_url or "")
+    target = social_login_target(next_url or "", app)
     if target is None:
         return []
     query = urlencode({"next": target[1]})
@@ -174,7 +168,7 @@ def social_start(request: HttpRequest, provider: str) -> HttpResponse:
     next_url = safe_next(request, request.GET.get("next")) or ""
     if request.user.is_authenticated:
         return redirect(next_url or "accounts:home")
-    target = social_login_target(next_url)
+    target = social_login_target(next_url, authorize_client(next_url))
     if target is None:
         return redirect(_login_url(next_url))
     purpose, next_url = target
@@ -285,17 +279,18 @@ def signup_confirm(request: HttpRequest) -> HttpResponse:
         assert result.user is not None
         return _sign_into(request, result.user, next_url)
     query = urlencode({"next": next_url})
-    labels = providers_with_email(profile)
+    linked = providers_with_email(profile)
     choices = [
         {"name": p.name, "label": p.label, "url": f"/login/{p.name}?{query}"}
         for p in configured_providers().values()
-        if p.label in labels
+        if p.name in linked
     ]
-    choices.sort(key=lambda c: labels.index(c["label"]))  # the order they were linked (#144)
+    choices.sort(key=lambda c: linked.index(c["name"]))  # the order they were linked (#144)
     context = {
-        "existing": " · ".join(labels),
+        # The screens' names, as 「내 계정」 (#152); the buttons keep each provider's wording.
+        "existing": " · ".join(provider_name(name) for name in linked),
         "choices": choices,
-        "provider": ExternalIdentity.Provider(profile.provider).label,
+        "provider": provider_name(profile.provider),
         "email": profile.email,
         "may_create": waiting.may_create,
         "login_url": _login_url(next_url),
