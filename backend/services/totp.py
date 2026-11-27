@@ -58,7 +58,8 @@ def qr_svg(text: str) -> str:
     image = qrcode.make(text, image_factory=qrcode.image.svg.SvgPathImage, box_size=8)
     out = io.BytesIO()
     image.save(out)
-    return out.getvalue().decode()
+    # The page wraps it in a named role=img; the graphic itself is not read out again (#143).
+    return out.getvalue().decode().replace("<svg ", '<svg aria-hidden="true" ', 1)
 
 
 def current_code(device: TotpDevice) -> str:

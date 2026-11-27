@@ -129,7 +129,7 @@ def test_connected_app_is_listed_and_disconnect_revokes_consent(
     event = AuditEvent.objects.get(kind=audit.CONSENT_REVOKED)
     assert event.detail["reason"] == "user_disconnected"
     body = page(member_client)
-    assert "앱 연결을 끊었습니다" in body and "연결된 앱이 없습니다" in body
+    assert f"{app.name} 연결을 끊었습니다" in body and "연결된 앱이 없습니다" in body
     # A second press changes nothing and says so.
     member_client.post(disconnect)
     assert "이미 연결이 끊어진 앱" in page(member_client)

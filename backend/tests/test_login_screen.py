@@ -150,7 +150,7 @@ def test_login_screen_leaves_other_screens_messages(member_client: Client) -> No
     assert "이메일을 저장했습니다" not in login
     assert 'data-slot="login-notice"' not in login
     account = member_client.get("/account").content.decode()
-    assert re.search(r'role="status"[^>]*>이메일을 저장했습니다', account)
+    assert re.search(r'role="status"[^>]*>계정 이메일을 저장했습니다', account)
 
 
 # 6. Signing out says so where it lands.
