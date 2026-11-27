@@ -24,6 +24,7 @@ from adapters.clock import get_clock
 from adapters.randomness import get_randomness
 from oauth.models import NEVER_MEMBER_SCOPES, Client, Resource, Scope
 from services import audit
+from services.locks import lock_account
 from services.oidc import LOGIN_INFO_SCOPES
 from services.terms import needs_terms
 
@@ -270,7 +271,7 @@ def set_member_email(user: User, email: str, *, ip: str = "") -> None:
     if len(cleaned) > EMAIL_MAX_LENGTH:
         raise InvalidEmail(cleaned)
     with transaction.atomic():
-        User.objects.select_for_update().filter(pk=user.pk).first()
+        lock_account(user.pk)
         taken = (
             User.objects.alias(e=Lower("email"))
             .filter(e=cleaned.lower(), member__isnull=False, is_active=True)

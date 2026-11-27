@@ -8,7 +8,8 @@ token family (unique indexes over generated marker columns, since MySQL has no p
 indexes), one account per external identity (#35), throttle counters without deadlocks
 (upsert, not INSERT IGNORE), one winner for an authorization code or a refresh token, and no
 live refresh token family left on a consent revoked during a code exchange (#111), and no
-deadlock between a code exchange and a withdrawal or a merge (#145: account, then consent).
+deadlock between a code exchange and a withdrawal, a merge or a wider consent, or between a
+refresh and a merge (#145, #151: the lock order of `services.locks`).
 """
 
 import itertools
@@ -39,6 +40,7 @@ from tests.conftest import (
     PORTFOLIO,
     FakeWebhooks,
     FrozenClock,
+    authorize_query,
     exchange_code,
     make_member,
     obtain_authorization_code,
@@ -313,4 +315,63 @@ def test_a_code_exchange_racing_a_withdrawal_or_a_merge_ends_without_deadlock(
             [400],
         ), results
         assert not RefreshTokenFamily.objects.filter(user=member, revoked_at=None).exists()
+        ExternalIdentity.objects.filter(user=owner).delete()
+
+
+def _status(response: TestResponse) -> int:
+    return response.status_code
+
+
+def _refresh_status(oauth_client: OAuthClient, token: str) -> int:
+    return refresh(Client(), oauth_client, token).status_code
+
+
+def test_a_code_exchange_racing_a_wider_consent_ends_without_deadlock(
+    logged_in_client: Client, owner: User, dcr_client: OAuthClient, signing_key: SigningKey
+) -> None:
+    """#151: allowing a wider consent replaces the old one (revokes it, inserts the new one)
+    while a code under the old one is exchanged. Both lock the account first; the other order
+    deadlocked (one side answered 500)."""
+    wider = "/authorize?" + authorize_query(dcr_client, scope="admin login")
+    for _ in range(ROUNDS):
+        for live in Consent.objects.filter(user=owner, revoked_at__isnull=True):
+            revoke_consent(live, reason="consent_revoked", actor="t", ip="")
+        code, verifier = obtain_authorization_code(logged_in_client, dcr_client)
+        jobs: list[Callable[[], object]] = [
+            partial(_exchange_status, dcr_client, code, verifier),
+            lambda: _status(logged_in_client.post(wider, {"decision": "allow"})),
+        ]
+
+        results = race(partial(_take_turn, jobs, itertools.count()), threads=2)
+
+        assert all(not isinstance(r, BaseException) for r in results), results
+        statuses = sorted(r for r in results if isinstance(r, int))
+        assert statuses in ([200, 302], [302, 400]), results
+        revoked = Consent.objects.filter(user=owner, revoked_at__isnull=False)
+        assert not RefreshTokenFamily.objects.filter(consent__in=revoked, revoked_at=None).exists()
+
+
+def test_a_refresh_racing_a_merge_ends_without_deadlock(
+    owner: User, dcr_client: OAuthClient, signing_key: SigningKey, frozen_clock: FrozenClock
+) -> None:
+    """#151: a merge revokes the member's families and deletes its tokens while its app
+    rotates a refresh token. Both lock the account first; the other order deadlocked."""
+    OAuthClient.objects.filter(pk=dcr_client.pk).update(allows_members=True)
+    dcr_client.refresh_from_db()
+    for index in range(ROUNDS):
+        member, code, verifier = _member_code(dcr_client, f"92{index}")
+        response = _exchange(dcr_client, code, verifier)
+        assert response.status_code == 200, response.content
+        token = str(response.json()["refresh_token"])
+        jobs: list[Callable[[], object]] = [
+            partial(_refresh_status, dcr_client, token),
+            partial(merge_member_into_owner, member.username, owner.username),
+        ]
+
+        results = race(partial(_take_turn, jobs, itertools.count()), threads=2)
+
+        assert all(not isinstance(r, BaseException) for r in results), results
+        assert [r for r in results if isinstance(r, int)] in ([200], [400]), results
+        assert not User.objects.filter(pk=member.pk).exists()
+        assert not RefreshTokenFamily.objects.filter(user=owner, revoked_at=None).exists()
         ExternalIdentity.objects.filter(user=owner).delete()

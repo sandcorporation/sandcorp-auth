@@ -62,6 +62,7 @@ from oauth.tokens import (
     successor_refresh_token,
 )
 from services import audit
+from services.locks import lock_account
 from services.machine_clients import ResourceRefused, ScopeRefused, machine_grant, machine_sub
 from services.members import (
     MemberClientRefused,
@@ -387,6 +388,9 @@ class SandcorpRefreshTokenGrant(RefreshTokenGrant):  # type: ignore[misc]  # no 
         # grace window it gets the winner's successor again, otherwise invalid_grant (not
         # reuse: its token was valid when it was sent).
         with transaction.atomic():
+            # The account first (`services.locks`): a merge holds it while it revokes the
+            # family and deletes its tokens (#151).
+            lock_account(token.family.user_id)
             locked = (
                 RefreshToken.objects.select_for_update()
                 .filter(pk=token.pk, family__revoked_at__isnull=True)  # e.g. a withdrawal

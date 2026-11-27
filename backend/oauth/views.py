@@ -19,6 +19,7 @@ from oauth.models import Client, Consent, Scope
 from oauth.server import SandcorpRevocationEndpoint, authorization_server_metadata, server
 from services import audit, throttle
 from services.consents import revoke_consent
+from services.locks import lock_account
 from services.members import MemberTermsPending, is_member
 from services.oidc import (
     USERINFO_RESOURCE,
@@ -196,6 +197,9 @@ def _grant_consent(
     now = get_clock().now()
     scopes = set(grant.scopes)
     with transaction.atomic():
+        # The account first (`services.locks`): the new consent's insert takes its row, and a
+        # code exchange under `previous` holds it while it waits for `previous` (#151).
+        lock_account(user.pk)
         if previous is not None:
             scopes |= set(previous.scopes)
             revoke_consent(previous, reason="consent_replaced", actor=user.username, ip=ip)

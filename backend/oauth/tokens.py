@@ -31,6 +31,7 @@ from oauth.models import (
     Resource,
 )
 from services import audit
+from services.locks import lock_account
 from services.machine_clients import MACHINE, machine_sub
 from services.members import (
     MEMBER,
@@ -236,8 +237,9 @@ def lock_live_consent(consent: Consent) -> bool:
 
     Account before consent is the one lock order (#145): a withdrawal and a member merge lock
     the account first and then revoke or move its consents. Taking the consent first here
-    deadlocked them, since the family a code exchange stores also takes the account row."""
-    User.objects.select_for_update().filter(pk=consent.user_id).exists()
+    deadlocked them, since the family a code exchange stores also takes the account row.
+    The order is `services.locks`."""
+    lock_account(consent.user_id)
     return (
         Consent.objects.select_for_update()
         .filter(pk=consent.pk, user_id=consent.user_id, revoked_at__isnull=True)
