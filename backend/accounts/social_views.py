@@ -15,7 +15,7 @@ from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from accounts.models import ExternalIdentity
+from accounts.models import ExternalIdentity, TermsAgreement
 from accounts.session import OWNER_ENROLLMENT_NOTICE, safe_next
 from adapters.clock import get_clock
 from core.http import client_ip
@@ -64,6 +64,15 @@ PENDING_SIGNUP_KEY = "accounts.social_signup"
 # second callback (back button, picking again) lands there instead of on a failure page (#123).
 JUST_SIGNED_IN_KEY = "accounts.social_signed_in"
 # Provider answers that mean "the person said no", not an attack: no throttle count.
+# How the screens name each provider (#143): Korean where the service has a Korean name. The
+# login buttons keep each provider's own wording (`_social_button.html`).
+PROVIDER_NAMES = {"google": "Google", "kakao": "카카오", "github": "GitHub"}
+
+
+def provider_name(provider: str) -> str:
+    return PROVIDER_NAMES.get(provider, provider)
+
+
 CANCELLED = frozenset({"access_denied", "consent_required", "interaction_required"})
 
 
@@ -237,11 +246,11 @@ def _finish_link(
     except NotAMember as error:
         raise PermissionDenied("only members and the owner link social logins") from error
     else:
-        label = ExternalIdentity.Provider(profile.provider).label
+        label = provider_name(profile.provider)
         if linked:
-            messages.success(request, f"{label} 로그인을 연결했습니다.")
+            messages.success(request, f"{label} 로그인 수단을 연결했습니다.")
         else:
-            messages.info(request, f"{label} 로그인은 이미 이 계정에 연결되어 있습니다.")
+            messages.info(request, f"{label} 로그인 수단은 이미 이 계정에 연결되어 있습니다.")
     return redirect("accounts:account")
 
 
@@ -322,16 +331,24 @@ def account(request: HttpRequest) -> HttpResponse:
         "email": user.email,
         "email_verified": member_email_verified(user),
         "identities": [
-            {"pk": i.pk, "label": i.get_provider_display(), "email": i.email} for i in linked
+            {"pk": i.pk, "label": provider_name(i.provider), "email": i.email, "since": i.linked_at}
+            for i in linked
         ],
         "can_unlink": is_owner or len(linked) > 1,
         "is_owner": is_owner,
         "link_choices": [
-            {"name": p.name, "label": p.label}
+            {"name": p.name, "label": provider_name(p.name)}
             for p in configured_providers().values()
             if p.name not in linked_providers
         ],
         "apps": [] if is_owner else connected_apps(user),
+        "agreements": []
+        if is_owner
+        else list(
+            TermsAgreement.objects.filter(user=user)
+            .select_related("document")
+            .order_by("agreed_at", "pk")
+        ),
     }
     return render(request, "accounts/account.html", context)
 
@@ -340,14 +357,15 @@ def account(request: HttpRequest) -> HttpResponse:
 @require_POST
 def set_email(request: HttpRequest) -> HttpResponse:
     user = _member_or_403(request)
+    email = request.POST.get("email", "")
     try:
-        set_member_email(user, request.POST.get("email", ""), ip=client_ip(request))
+        set_member_email(user, email, ip=client_ip(request))
     except InvalidEmail:
         messages.error(request, "이메일 주소 형식이 맞지 않습니다.")
     except EmailTaken:
         messages.error(request, "이미 다른 계정에서 쓰는 이메일입니다.")
     else:
-        messages.success(request, "이메일을 저장했습니다.")
+        messages.success(request, f"계정 이메일을 저장했습니다 ({user.email}).")
     return redirect("accounts:account")
 
 
@@ -355,8 +373,9 @@ def set_email(request: HttpRequest) -> HttpResponse:
 @require_POST
 def disconnect(request: HttpRequest, client_pk: int) -> HttpResponse:
     user = _member_or_403(request)
+    name = next((app.name for app in connected_apps(user) if app.client_id == client_pk), "")
     if disconnect_app(user, client_pk, ip=client_ip(request)):
-        messages.success(request, "앱 연결을 끊었습니다.")
+        messages.success(request, f"{name} 연결을 끊었습니다.")
     else:
         messages.info(request, "이미 연결이 끊어진 앱입니다.")
     return redirect("accounts:account")
@@ -391,9 +410,7 @@ def unlink(request: HttpRequest, identity_id: int) -> HttpResponse:
     except NotAMember as error:
         raise PermissionDenied("for members only") from error
     else:
-        messages.success(
-            request, f"{ExternalIdentity.Provider(provider).label} 로그인 연결을 해제했습니다."
-        )
+        messages.success(request, f"{provider_name(provider)} 로그인 수단을 해제했습니다.")
     return redirect("accounts:account")
 
 

@@ -1,4 +1,5 @@
 {% extends "accounts/base.html" %}
+{% load static %}
 {% block title %}약관 동의{% endblock %}
 {% block masthead_meta %}가입{% endblock %}
 {% block content %}
@@ -16,6 +17,7 @@
   {% csrf_token %}
   <input type="hidden" name="next" value="{{ next }}">
   <div class="auth-checks">
+    <label class="auth-check auth-check--all" data-slot="agree-all" hidden><input type="checkbox" data-agree-all> <span>모두 동의</span></label>
     {% for d in documents %}
     <label class="auth-check"><input type="checkbox" name="document" value="{{ d.pk }}" required>
       <span>(필수) <a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.get_kind_display }}</a> 동의</span>
@@ -25,5 +27,6 @@
   </div>
   <button class="sc-btn sc-btn--accent sc-btn--block auth-subtle" type="submit">동의하고 계속</button>
 </form>
+<script src="{% static 'terms.js' %}" defer></script>
 {% endif %}
 {% endblock %}
