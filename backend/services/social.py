@@ -41,6 +41,7 @@ from accounts.models import ExternalIdentity, Member
 from accounts.session import allows_get
 from adapters.clock import get_clock
 from adapters.randomness import get_randomness
+from oauth.models import Client
 from services import audit
 from services.clients import find_client
 from services.members import ExternalProfile, IdentityTaken, create_member, is_member
@@ -351,18 +352,23 @@ def unlink_identity(user: User, identity_id: int, *, ip: str) -> str:
     return target.provider
 
 
+def authorize_client(next_url: str | None) -> Client | None:
+    """The active client of an `/authorize` request `next_url` (one `client_id`), else None."""
+    if not next_url:
+        return None
+    parts = urlsplit(next_url)
+    if parts.path != "/authorize":
+        return None
+    client_ids = parse_qs(parts.query).get("client_id", [])
+    if len(client_ids) != 1:
+        return None
+    return find_client(client_ids[0])
+
+
 def social_login_allowed(next_url: str | None) -> bool:
     """True when `next_url` is an `/authorize` request of an active client that allows
     members: only then may a person sign in (or up) with a social login."""
-    if not next_url:
-        return False
-    parts = urlsplit(next_url)
-    if parts.path != "/authorize":
-        return False
-    client_ids = parse_qs(parts.query).get("client_id", [])
-    if len(client_ids) != 1:
-        return False
-    client = find_client(client_ids[0])
+    client = authorize_client(next_url)
     return client is not None and client.allows_members
 
 

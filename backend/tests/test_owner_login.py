@@ -100,7 +100,7 @@ def test_full_login_lifecycle(client: Client, owner: User, frozen_clock: FrozenC
     client.post("/logout")
     login_password(client)
     replay = client.post("/login/totp", {"code": code})
-    assert replay.status_code == 200 and "맞지 않습니다" in replay.content.decode()
+    assert replay.status_code == 200 and "이미 쓴 코드입니다" in replay.content.decode()
     frozen_clock.advance(30)
     assert client.post("/login/totp", {"code": totp_code(owner)})["Location"] == "/"
     assert client.get(ADMIN).status_code == 200

@@ -19,7 +19,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 
 from services import audit, throttle
-from services.totp import accept_code, confirmed_device, enrollment_device
+from services.totp import accept_code, confirmed_device, enrollment_device, was_used
 
 IP_RULE = "login"
 ACCOUNT_RULE = "login_account"
@@ -90,6 +90,12 @@ def check_totp_step(user: User, code: str) -> bool:
     """Second step for an enrolled owner: a fresh, correct TOTP code."""
     device = confirmed_device(user)
     return device is not None and accept_code(device, code)
+
+
+def totp_code_reused(user: User, code: str) -> bool:
+    """Whether a refused `check_totp_step` code was right but already used (#141)."""
+    device = confirmed_device(user)
+    return device is not None and was_used(device, code)
 
 
 def check_totp_enrollment(user: User, code: str) -> bool:
