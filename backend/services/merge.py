@@ -121,8 +121,7 @@ def merge_member_into_owner(
         if dry_run:
             return report
 
-        for family in families:
-            revoke_family(family, REVOKE_REASON)
+        # Consents before families (services.locks).
         for consent in consents:
             kept = existing.get((consent.client_id, consent.resource_id))
             if kept is None:
@@ -130,6 +129,8 @@ def merge_member_into_owner(
             else:
                 scopes = sorted(set(kept.scopes) | set(consent.scopes))
                 Consent.objects.filter(pk=kept.pk).update(scopes=scopes)
+        for family in families:
+            revoke_family(family, REVOKE_REASON)
         ExternalIdentity.objects.filter(user=source).update(user=target)
         queued = enqueue_user_merged(source.username, target.username, clients)
         audit.record(
