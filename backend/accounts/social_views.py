@@ -32,6 +32,7 @@ from services.members import (
     set_member_email,
 )
 from services.social import (
+    ACCOUNT_HOME,
     PENDING_SECONDS,
     IdentityNotFound,
     LastIdentity,
@@ -63,6 +64,10 @@ PENDING_SIGNUP_KEY = "accounts.social_signup"
 # Where the login that just finished was headed, kept as long as a pending login lives, so a
 # second callback (back button, picking again) lands there instead of on a failure page (#123).
 JUST_SIGNED_IN_KEY = "accounts.social_signed_in"
+# Where the last pending sign-in was headed, kept 10 minutes after it is taken out, so a
+# callback with no pending login (back button after a cancel) still leads to that app's login
+# screen (#144). Dropped at the end of a login; a logout flushes the session.
+RECENT_NEXT_KEY = "accounts.social_recent_next"
 # Provider answers that mean "the person said no", not an attack: no throttle count.
 # How the screens name each provider (#143): Korean where the service has a Korean name. The
 # login buttons keep each provider's own wording (`_social_button.html`).
@@ -118,10 +123,8 @@ def _sign_into(request: HttpRequest, user: User, next_url: str) -> HttpResponse:
         return redirect(_login_url(next_url))
     login(request, user, backend=BACKEND)  # also sets last_login, the ID token's auth_time
     drop_strong(request)  # a social login never opens the owner's admin and grants (#100)
-    request.session[JUST_SIGNED_IN_KEY] = {
-        "next": next_url,
-        "at": get_clock().now().timestamp(),
-    }
+    request.session.pop(RECENT_NEXT_KEY, None)
+    request.session[JUST_SIGNED_IN_KEY] = _note(next_url)
     if needs_terms(user):  # a new account, or a new version of the terms (#37)
         return (
             redirect("/terms?" + urlencode({"next": next_url})) if next_url else redirect("/terms")
@@ -129,9 +132,13 @@ def _sign_into(request: HttpRequest, user: User, next_url: str) -> HttpResponse:
     return redirect(next_url or "accounts:home")
 
 
-def _just_signed_in_next(request: HttpRequest) -> str:
-    """The `next` of the login that finished a moment ago in this session, or ""."""
-    note = request.session.get(JUST_SIGNED_IN_KEY)
+def _note(next_url: str) -> dict[str, str | float]:
+    return {"next": next_url, "at": get_clock().now().timestamp()}
+
+
+def _noted_next(request: HttpRequest, key: str) -> str:
+    """The `next` noted under `key` in the last 10 minutes (see `_note`), or ""."""
+    note = request.session.get(key)
     if not isinstance(note, dict):
         return ""
     started, target = note.get("at"), note.get("next")
@@ -183,9 +190,15 @@ def social_callback(request: HttpRequest, provider: str) -> HttpResponse:
     raw = request.session.pop(PENDING_SOCIAL_KEY, None)  # one callback per start
     if raw is None and request.user.is_authenticated:
         # The login already finished (back button, picking again): not a failure (#123).
-        return redirect(_just_signed_in_next(request) or "accounts:home")
-    next_url = raw.get("next", "") if isinstance(raw, dict) else ""
-    next_url = next_url if isinstance(next_url, str) else ""
+        # A link flow noted 「내 계정」 when it started (#144).
+        return redirect(_noted_next(request, JUST_SIGNED_IN_KEY) or "accounts:home")
+    if isinstance(raw, dict):
+        next_url = raw.get("next", "")
+        next_url = next_url if isinstance(next_url, str) else ""
+        if raw.get("purpose") != "link":
+            request.session[RECENT_NEXT_KEY] = _note(next_url)
+    else:  # no pending login: the one taken out a moment ago, if any (#144)
+        next_url = _noted_next(request, RECENT_NEXT_KEY)
     ip_key = f"ip:{ip}"
     wait = throttle.check(IP_RULE, ip_key).retry_after
     if wait:
@@ -218,7 +231,7 @@ def social_callback(request: HttpRequest, provider: str) -> HttpResponse:
             audit.SOCIAL_LOGIN_FAILED, ip=ip, detail={"provider": provider, "reason": error.reason}
         )
         if error.reason == "no_account":
-            context = {"login_url": _login_url(pending["next"])}
+            context = {"login_url": _login_url(pending["next"])}  # withdrawn or never seen
             return render(request, "accounts/social_no_account.html", context)
         return _failed(request, provider, error.reason, next_url, status=403)
     if result.user is None:
@@ -278,12 +291,14 @@ def signup_confirm(request: HttpRequest) -> HttpResponse:
         for p in configured_providers().values()
         if p.label in labels
     ]
+    choices.sort(key=lambda c: labels.index(c["label"]))  # the order they were linked (#144)
     context = {
         "existing": " · ".join(labels),
         "choices": choices,
         "provider": ExternalIdentity.Provider(profile.provider).label,
         "email": profile.email,
         "may_create": waiting.may_create,
+        "login_url": _login_url(next_url),
     }
     return render(request, "accounts/signup_confirm.html", context)
 
@@ -391,6 +406,9 @@ def link_start(request: HttpRequest, provider: str) -> HttpResponse:
         return _step_up()
     url, pending = begin(social, "link", user_id=user.pk)
     request.session[PENDING_SOCIAL_KEY] = dict(pending)
+    # A repeated callback of this flow (finished or cancelled) lands on 「내 계정」, not on the
+    # app of an earlier login (#144).
+    request.session[JUST_SIGNED_IN_KEY] = _note(ACCOUNT_HOME)
     return redirect(url)
 
 
