@@ -42,7 +42,7 @@ def take_login_notices(request: HttpRequest) -> list[str]:
         else:
             others.append(message)
     for message in others:
-        storage.add(message.level, message.message, message.extra_tags)
+        messages.add_message(request, message.level, message.message, message.extra_tags)
     return notices
 
 
