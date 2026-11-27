@@ -19,6 +19,7 @@ from django.utils import timezone
 from accounts.models import Member, TermsAgreement, TermsDocument
 from adapters.clock import get_clock
 from services import audit
+from services.locks import lock_account
 
 
 class TermsError(Exception):
@@ -92,6 +93,7 @@ def agree_to_terms(
         raise TermsNotAccepted()
     now = get_clock().now()
     with transaction.atomic():
+        lock_account(user.pk)  # the order is services.locks
         member = Member.objects.select_for_update().get(user_id=user.pk)
         already = set(
             TermsAgreement.objects.filter(user_id=user.pk).values_list("document_id", flat=True)

@@ -44,6 +44,7 @@ from adapters.randomness import get_randomness
 from oauth.models import Client
 from services import audit
 from services.clients import find_client
+from services.locks import lock_account
 from services.members import ExternalProfile, IdentityTaken, create_member, is_member
 from services.social_providers import (
     AuthorizationRequest,
@@ -335,7 +336,7 @@ def unlink_identity(user: User, identity_id: int, *, ip: str) -> str:
         raise NotAMember(user.get_username())
     member = is_member(user)
     with transaction.atomic():
-        User.objects.select_for_update().filter(pk=user.pk).first()
+        lock_account(user.pk)
         identities = list(ExternalIdentity.objects.filter(user_id=user.pk))
         target = next((i for i in identities if i.pk == identity_id), None)
         if target is None:
