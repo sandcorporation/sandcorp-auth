@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import pytest
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.http.response import HttpResponseBase
 from django.test import Client, override_settings
 
 from accounts.models import ExternalIdentity
@@ -36,8 +37,8 @@ def login_link(next_url: str) -> str:
     return 'href="/login?' + urlencode({"next": next_url}) + '"'
 
 
-def body(response: object) -> str:
-    return response.content.decode().replace("&amp;", "&")  # type: ignore[attr-defined]
+def body(response: HttpResponseBase) -> str:
+    return str(response.content.decode()).replace("&amp;", "&")  # type: ignore[attr-defined]
 
 
 # --- 1. a link flow that finished goes back to 「내 계정」 ------------------------------------
