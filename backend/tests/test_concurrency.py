@@ -12,6 +12,7 @@ deadlock between a code exchange and a withdrawal, a merge or a wider consent, o
 refresh and a merge (#145, #151: the lock order of `services.locks`).
 """
 
+import copy
 import itertools
 import threading
 from collections.abc import Callable, Sequence
@@ -25,6 +26,7 @@ from django.db import IntegrityError, connection
 from django.test import Client
 
 from accounts.models import ExternalIdentity
+from audit.models import AuditEvent
 from oauth.models import Client as OAuthClient
 from oauth.models import Consent, RefreshTokenFamily, Resource, SigningKey, WebhookDelivery
 from oauth.tokens import live_family
@@ -46,6 +48,7 @@ from tests.conftest import (
     obtain_authorization_code,
     obtain_tokens,
     refresh,
+    use_https,
 )
 
 # serialized_rollback: the flush after each test would wipe the resources and scopes that
@@ -251,8 +254,6 @@ def test_a_consent_revoked_during_a_code_exchange_keeps_no_live_family(
 def test_concurrent_withdrawals_withdraw_once_and_queue_one_webhook(
     dcr_client: OAuthClient, fake_webhooks: FakeWebhooks
 ) -> None:
-    from audit.models import AuditEvent
-
     member = make_member()
     set_webhook(dcr_client, url="https://site.example/hook", rotate_secret=False, actor="t")
     Consent.objects.create(
@@ -349,6 +350,34 @@ def test_a_code_exchange_racing_a_wider_consent_ends_without_deadlock(
         assert statuses in ([200, 302], [302, 400]), results
         revoked = Consent.objects.filter(user=owner, revoked_at__isnull=False)
         assert not RefreshTokenFamily.objects.filter(consent__in=revoked, revoked_at=None).exists()
+
+
+def test_allowing_the_same_consent_twice_at_once_gives_both_a_code(
+    logged_in_client: Client, owner: User, dcr_client: OAuthClient, signing_key: SigningKey
+) -> None:
+    """#157: 「허락」 clicked twice (or in two tabs) at once. Both requests read no live consent
+    before the account lock; the second must read again after it and reuse the first's consent
+    (the unique live consent constraint answered 500)."""
+    screen = "/authorize?" + authorize_query(dcr_client, scope="admin")
+    use_https(logged_in_client)
+    twin = use_https(Client())
+    twin.cookies = copy.deepcopy(logged_in_client.cookies)
+    for _ in range(ROUNDS):
+        for live in Consent.objects.filter(user=owner, revoked_at__isnull=True):
+            revoke_consent(live, reason="consent_revoked", actor="t", ip="")
+        jobs: list[Callable[[], object]] = [
+            lambda: _status(logged_in_client.post(screen, {"decision": "allow"})),
+            lambda: _status(twin.post(screen, {"decision": "allow"})),
+        ]
+
+        results = race(partial(_take_turn, jobs, itertools.count()), threads=2)
+
+        assert results == [302, 302], results
+        live_consents = Consent.objects.filter(
+            user=owner, client=dcr_client, revoked_at__isnull=True
+        )
+        assert [c.scopes for c in live_consents] == [["admin"]]
+    assert AuditEvent.objects.filter(kind=audit.CONSENT_GRANTED).count() == ROUNDS
 
 
 def test_a_refresh_racing_a_merge_ends_without_deadlock(

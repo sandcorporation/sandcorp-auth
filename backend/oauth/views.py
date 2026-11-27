@@ -176,8 +176,7 @@ def authorize(request: HttpRequest) -> HttpResponse:
             detail=detail,
         )
         return _no_store(server.create_authorization_response(request, grant=grant))
-    if consent is None or not consent.covers(grant.scopes):
-        _grant_consent(user, grant, consent, ip)
+    if (consent is None or not consent.covers(grant.scopes)) and _grant_consent(user, grant, ip):
         audit.record(
             audit.CONSENT_GRANTED,
             actor=user.username,
@@ -188,28 +187,33 @@ def authorize(request: HttpRequest) -> HttpResponse:
     return _issue_code(request, grant, user, ip)
 
 
-def _grant_consent(
-    user: User, grant: SandcorpAuthorizationCodeGrant, previous: Consent | None, ip: str
-) -> Consent:
-    """Replace `previous` (if any) with a live consent for its scopes plus the requested ones.
-    `previous` is revoked like any consent, refresh token families included: the client is
-    getting a code under the new consent right now, so it loses nothing it cannot replace."""
+def _grant_consent(user: User, grant: SandcorpAuthorizationCodeGrant, ip: str) -> bool:
+    """Replace the live consent (if any) with one for its scopes plus the requested ones; False
+    when the live consent already covers them. The replaced consent is revoked like any consent,
+    refresh token families included: the client is getting a code under the new consent right
+    now, so it loses nothing it cannot replace."""
     now = get_clock().now()
     scopes = set(grant.scopes)
     with transaction.atomic():
         # The account first (`services.locks`): the new consent's insert takes its row, and a
         # code exchange under `previous` holds it while it waits for `previous` (#151).
         lock_account(user.pk)
+        # Read under the lock: a second 「허락」 (a double click, another tab) finds the consent
+        # the first one gave and keeps it (#157).
+        previous = live_consent(user, grant.request.client, grant.resource)
+        if previous is not None and previous.covers(grant.scopes):
+            return False
         if previous is not None:
             scopes |= set(previous.scopes)
             revoke_consent(previous, reason="consent_replaced", actor=user.username, ip=ip)
-        return Consent.objects.create(
+        Consent.objects.create(
             user=user,
             client=grant.request.client,
             resource=grant.resource,
             scopes=sorted(scopes),
             granted_at=now,
         )
+    return True
 
 
 def _issue_code(
