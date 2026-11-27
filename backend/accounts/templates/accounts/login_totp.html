@@ -3,7 +3,7 @@
 {% block content %}
 <h1>인증 코드</h1>
 <p class="auth-lead">인증 앱에 뜬 6자리 코드를 넣어 주세요.</p>
-{% if error %}<div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">코드가 맞지 않습니다</span>{{ error }}</div>{% endif %}
+{% if error %}<div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">{{ error_title }}</span>{{ error }}</div>{% endif %}
 <form method="post" class="auth-form">
   {% csrf_token %}
   <div class="sc-field{% if error %} sc-field--error{% endif %}">

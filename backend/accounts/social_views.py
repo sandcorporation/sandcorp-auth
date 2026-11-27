@@ -16,7 +16,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from accounts.models import ExternalIdentity, TermsAgreement
-from accounts.session import OWNER_ENROLLMENT_NOTICE, safe_next
+from accounts.session import OWNER_ENROLLMENT_NOTICE, add_login_notice, safe_next
 from adapters.clock import get_clock
 from core.http import client_ip
 from services import audit, throttle
@@ -119,7 +119,7 @@ def _sign_into(request: HttpRequest, user: User, next_url: str) -> HttpResponse:
     if not is_member(user) and not is_enrolled(user):
         # The owner before TOTP enrollment: enrolling needs the password, never a social
         # session. Say so on the login screen instead of signing in and out silently (#110).
-        messages.info(request, OWNER_ENROLLMENT_NOTICE)
+        add_login_notice(request, OWNER_ENROLLMENT_NOTICE)
         return redirect(_login_url(next_url))
     login(request, user, backend=BACKEND)  # also sets last_login, the ID token's auth_time
     drop_strong(request)  # a social login never opens the owner's admin and grants (#100)
