@@ -259,10 +259,11 @@ class EmailTaken(Exception):
     pass
 
 
-def set_member_email(user: User, email: str, *, ip: str = "") -> None:
+def set_member_email(user: User, email: str, *, ip: str = "") -> bool:
     """The member types (or changes) their account email on 「내 계정」: it is theirs, not the
-    provider's word, so it is kept unverified. Raises InvalidEmail, EmailTaken (another member
-    has it). Callers pass members only."""
+    provider's word, so it is kept unverified. The same address again (case and surrounding
+    spaces aside, #158) changes nothing and keeps the verified mark; returns whether it changed.
+    Raises InvalidEmail, EmailTaken (another member has it). Callers pass members only."""
     cleaned = email.strip()
     try:
         validate_email(cleaned)
@@ -272,6 +273,10 @@ def set_member_email(user: User, email: str, *, ip: str = "") -> None:
         raise InvalidEmail(cleaned)
     with transaction.atomic():
         lock_account(user.pk)
+        current = User.objects.values_list("email", flat=True).get(pk=user.pk)
+        if current.strip().lower() == cleaned.lower():
+            user.email = current
+            return False
         taken = (
             User.objects.alias(e=Lower("email"))
             .filter(e=cleaned.lower(), member__isnull=False, is_active=True)
@@ -284,3 +289,4 @@ def set_member_email(user: User, email: str, *, ip: str = "") -> None:
         user.save(update_fields=["email"])
         Member.objects.filter(user_id=user.pk).update(email_verified=False)
     audit.record(audit.MEMBER_EMAIL_CHANGED, actor=user.get_username(), ip=ip)
+    return True

@@ -369,13 +369,16 @@ def set_email(request: HttpRequest) -> HttpResponse:
     user = _member_or_403(request)
     email = request.POST.get("email", "")
     try:
-        set_member_email(user, email, ip=client_ip(request))
+        changed = set_member_email(user, email, ip=client_ip(request))
     except InvalidEmail:
         messages.error(request, "이메일 주소 형식이 맞지 않습니다.")
     except EmailTaken:
         messages.error(request, "이미 다른 계정에서 쓰는 이메일입니다.")
     else:
-        messages.success(request, f"계정 이메일을 저장했습니다 ({user.email}).")
+        if changed:
+            messages.success(request, f"계정 이메일을 저장했습니다 ({user.email}).")
+        else:
+            messages.info(request, f"이메일이 바뀌지 않았습니다 ({user.email}).")
     return redirect("accounts:account")
 
 

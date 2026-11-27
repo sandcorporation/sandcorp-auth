@@ -10,6 +10,7 @@
 
 <section class="auth-section" data-slot="identities">
   <h2>로그인 수단</h2>
+  {% if identities %}
   <ul class="sc-list">
     {% for i in identities %}
     <li>
@@ -18,6 +19,9 @@
     </li>
     {% endfor %}
   </ul>
+  {% else %}
+  <p class="auth-meta-text">연결된 로그인 수단이 없습니다.</p>
+  {% endif %}
   {% if link_choices %}
   <div class="auth-inline auth-subtle">
     {% for p in link_choices %}
