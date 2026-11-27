@@ -31,8 +31,10 @@ from services.members import (
     account_kind,
     create_member,
 )
+from services.oidc import USERINFO_RESOURCE
 from services.owner import create_owner, get_owner
 from tests.conftest import (
+    CIMD_URL,
     MEMBER_EMAIL,
     MEMBER_NAME,
     NEWS,
@@ -221,6 +223,64 @@ def test_member_consent_for_login_info_has_no_owner_wording_or_scope_names(
     assert "대표" not in page
     assert "계정 식별자" in page
     assert "auth-scope-name" not in page
+
+
+# --- member consent screen in plain words (#142) ---------------------------------------------
+
+
+def test_member_consent_lists_what_goes_to_the_app_with_its_values(
+    member_client: Client, members_proxy: Proxy
+) -> None:
+    oauth_client, _ = members_proxy
+    use_https(member_client)
+    url = "/authorize?" + authorize_query(oauth_client, resource=None, scope="openid profile email")
+    page = member_client.get(url).content.decode()
+    assert USERINFO_RESOURCE not in page and ">리소스<" not in page
+    assert "로그인 정보(이름·이메일) 제공" not in page
+    items = re.findall(r'<li class="auth-share">(.*?)</li>', page, re.S)
+    assert len(items) == 3
+    assert "이 앱에서 나를 알아보는 번호" in items[0]
+    assert "이름" in items[1] and MEMBER_NAME in items[1]
+    assert "이메일" in items[2] and MEMBER_EMAIL in items[2]
+    # The sentence sits above the list it speaks of.
+    assert page.index("아래 정보가") < page.index('class="auth-share"')
+    assert "위 정보가" not in page
+
+
+def test_member_consent_says_none_for_a_value_the_account_lacks(
+    client: Client, members_proxy: Proxy, frozen_clock: FrozenClock
+) -> None:
+    member = make_member(provider_sub="2", email="", name="")
+    client.force_login(member)
+    oauth_client, _ = members_proxy
+    use_https(client)
+    url = "/authorize?" + authorize_query(oauth_client, resource=None, scope="openid profile email")
+    page = client.get(url).content.decode()
+    items = re.findall(r'<li class="auth-share">(.*?)</li>', page, re.S)
+    assert "없음" in items[1] and "없음" in items[2]
+
+
+def test_member_consent_hides_the_cimd_client_id(
+    member_client: Client, cimd_client: OAuthClient, signing_key: SigningKey
+) -> None:
+    OAuthClient.objects.filter(pk=cimd_client.pk).update(allows_members=True)
+    use_https(member_client)
+    url = "/authorize?" + authorize_query(cimd_client, scope="login")
+    page = member_client.get(url).content.decode()
+    assert f"{cimd_client.name}에 로그인" in page
+    assert f">{CIMD_URL}<" not in page
+    assert PORTFOLIO not in page
+
+
+def test_owner_consent_keeps_client_id_and_resource(
+    logged_in_client: Client, cimd_client: OAuthClient, signing_key: SigningKey
+) -> None:
+    use_https(logged_in_client)
+    url = "/authorize?" + authorize_query(cimd_client, scope="admin", resource=PORTFOLIO)
+    page = logged_in_client.get(url).content.decode()
+    assert f'<p class="auth-meta-text">{CIMD_URL}</p>' in page
+    assert ">리소스<" in page and PORTFOLIO in page
+    assert "auth-scope-name" in page and "auth-share" not in page
 
 
 def test_member_on_an_allowing_client_gets_a_member_access_token(
