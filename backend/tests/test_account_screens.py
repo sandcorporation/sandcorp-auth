@@ -22,15 +22,13 @@ STATIC = Path(settings.BASE_DIR) / "static"
 def css_rule(selector: str) -> str:
     """The declarations of the auth.css rule whose selector list holds `selector`."""
     css = (STATIC / "auth.css").read_text()
-    for selectors, body in re.findall(r"([^{}]+)\{([^}]*)\}", css):
-        if selector in [s.strip() for s in selectors.split(",")]:
-            return body
+    for rule in re.finditer(r"([^{}]+)\{([^}]*)\}", css):
+        if selector in [s.strip() for s in rule.group(1).split(",")]:
+            return rule.group(2)
     raise AssertionError(f"no rule for {selector}")
 
 
-@pytest.mark.parametrize(
-    "selector", [".auth-main .sc-btn--sm", ".auth-link-button", ".auth-check"]
-)
+@pytest.mark.parametrize("selector", [".auth-main .sc-btn--sm", ".auth-link-button", ".auth-check"])
 def test_small_buttons_link_buttons_and_check_rows_are_44px_tall(selector: str) -> None:
     assert re.search(r"min-height:\s*(2\.75rem|44px)", css_rule(selector)), selector
 
