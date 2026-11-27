@@ -1,7 +1,8 @@
 {% extends "accounts/base.html" %}
 {% block content %}
 <h1>로그인</h1>
-{% for notice in notices %}<div class="sc-alert auth-alert" role="status" data-slot="login-notice"><span class="sc-alert-title">안내</span>{{ notice }}</div>{% endfor %}
+{% if app_name %}<p class="auth-lead" data-slot="login-app"><strong>{{ app_name }}</strong>에 로그인합니다.</p>{% endif %}
+{% for notice in notices %}<div class="sc-alert auth-alert" role="status" data-slot="login-notice"{% if notice == logged_out_notice %} tabindex="-1" autofocus{% endif %}><span class="sc-alert-title">안내</span>{{ notice }}</div>{% endfor %}
 {% if social %}
 {% if signs_up %}<p class="auth-lead">Sandcorp 계정으로 계속합니다. 처음이면 계정이 만들어집니다.</p>
 {% else %}<p class="auth-lead">Sandcorp 계정으로 로그인합니다.</p>{% endif %}
@@ -9,8 +10,8 @@
 <div class="auth-stack" data-slot="social-login">
   {% for p in social %}{% include "accounts/_social_button.html" %}{% endfor %}
 </div>
-<details class="auth-details auth-subtle"{% if error or username %} open{% endif %}>
-  <summary>대표 계정으로 로그인</summary>
+<details class="auth-details auth-subtle" data-slot="owner-login"{% if owner_open %} open{% endif %}>
+  <summary>관리자 로그인</summary>
   {% include "accounts/_owner_login_form.html" %}
 </details>
 {% elif step_up %}
@@ -18,7 +19,7 @@
 {% if error %}<div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">로그인하지 못했습니다</span>{{ error }}</div>{% endif %}
 {% include "accounts/_owner_login_form.html" %}
 {% else %}
-<p class="auth-lead">대표 계정으로 로그인합니다.</p>
+<p class="auth-lead">관리자 계정으로 로그인합니다.</p>
 {% if error %}<div class="sc-alert sc-alert--error auth-alert" role="alert"><span class="sc-alert-title">로그인하지 못했습니다</span>{{ error }}</div>{% endif %}
 {% include "accounts/_owner_login_form.html" %}
 {% endif %}

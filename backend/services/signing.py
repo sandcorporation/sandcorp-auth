@@ -58,6 +58,17 @@ def random_token(n_bytes: int = 16) -> str:
     return b64url(get_randomness().token_bytes(n_bytes))
 
 
+def new_client_id() -> str:
+    """A fresh `client_id`: `random_token()` drawn again until it does not start with `-`.
+
+    A leading `-` makes argparse read `--client-id <id>` as an option (#155), so ids stay the
+    same shape, length and alphabet but never begin with it.
+    """
+    while (client_id := random_token()).startswith("-"):
+        pass
+    return client_id
+
+
 def _new_key(now: datetime) -> SigningKey:
     seed = get_randomness().token_bytes(32)
     private_key = Ed25519PrivateKey.from_private_bytes(seed)

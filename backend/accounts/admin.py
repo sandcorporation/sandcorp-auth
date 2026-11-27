@@ -4,9 +4,10 @@ from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User
+from django.db.models import QuerySet
 from django.http import HttpRequest
 
-from accounts.models import TermsAgreement, TermsDocument
+from accounts.models import Member, TermsAgreement, TermsDocument
 from adapters.clock import get_clock
 from core.http import client_ip
 from services.terms import record_registered
@@ -22,13 +23,56 @@ else:  # generic only in django-stubs
 
 admin.site.unregister(User)
 
+OWNER_FILTER = "owner"
+
+
+def _member(user: User) -> Member | None:
+    try:
+        return user.member
+    except Member.DoesNotExist:
+        return None
+
+
+class AccountStatusFilter(admin.SimpleListFilter):
+    """대표 / a member status (#145)."""
+
+    title = "회원 상태"
+    parameter_name = "account_status"
+
+    def lookups(
+        self, request: HttpRequest, model_admin: admin.ModelAdmin[User]
+    ) -> list[tuple[str, str]]:
+        return [(OWNER_FILTER, "대표"), *Member.Status.choices]
+
+    def queryset(self, request: HttpRequest, queryset: QuerySet[User]) -> QuerySet[User]:
+        value = self.value()
+        if value == OWNER_FILTER:
+            return queryset.filter(member__isnull=True)
+        if value in Member.Status.values:
+            return queryset.filter(member__status=value)
+        return queryset
+
 
 @admin.register(User)
 class OwnerAdmin(_UserAdmin):
-    """The owner account is created by `manage.py owner create`; admin cannot add a second."""
+    """The owner account is created by `manage.py owner create`; admin cannot add a second.
+    The list shows the owner and members with their account kind and member status (#145)."""
+
+    list_display = ("username", "email", "account_kind", "member_status", "is_active")
+    list_filter = (AccountStatusFilter, "is_active")
+    list_select_related = ("member",)
 
     def has_add_permission(self, request: HttpRequest) -> bool:
         return False
+
+    @admin.display(description="계정 종류")
+    def account_kind(self, obj: User) -> str:
+        return "일반 사용자" if _member(obj) is not None else "대표"
+
+    @admin.display(description="회원 상태")
+    def member_status(self, obj: User) -> str:
+        member = _member(obj)
+        return "-" if member is None else member.get_status_display()
 
 
 @admin.register(TermsDocument)

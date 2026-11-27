@@ -32,6 +32,7 @@ from oauth.tokens import revoke_family
 from services import audit, throttle
 from services.audit import JSON
 from services.consents import revoke_consent
+from services.locks import lock_account
 from services.webhooks import enqueue_user_deleted
 
 CONFIRM_PHRASE: Final = "탈퇴합니다"
@@ -46,6 +47,7 @@ def withdraw_member(user: User) -> bool:
     now = get_clock().now()
     sub = user.get_username()
     with transaction.atomic():
+        lock_account(user.pk)  # the order is services.locks
         claimed = (
             Member.objects.filter(user_id=user.pk)
             .exclude(status=Member.Status.WITHDRAWN)
@@ -118,6 +120,7 @@ def _purge_member(member: Member) -> None:
     user = member.user
     now = get_clock().now()
     with transaction.atomic():
+        lock_account(user.pk)  # the account before the member row (services.locks)
         claimed = Member.objects.filter(pk=member.pk, purged_at__isnull=True).update(
             purged_at=now, email_verified=False
         )

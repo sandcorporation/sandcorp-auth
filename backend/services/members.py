@@ -24,6 +24,7 @@ from adapters.clock import get_clock
 from adapters.randomness import get_randomness
 from oauth.models import NEVER_MEMBER_SCOPES, Client, Resource, Scope
 from services import audit
+from services.locks import lock_account
 from services.oidc import LOGIN_INFO_SCOPES
 from services.terms import needs_terms
 
@@ -147,13 +148,20 @@ def mask_email(email: str) -> str:
     return local[:2] + "***" + at + domain
 
 
+# How the screens name each provider (#143, #152): Korean where the service has a Korean name.
+# The login buttons keep each provider's own wording (`_social_button.html`).
+PROVIDER_NAMES: Final = {"google": "Google", "kakao": "카카오", "github": "GitHub"}
+
+
+def provider_name(provider: str) -> str:
+    return PROVIDER_NAMES.get(provider, provider)
+
+
 def account_label(user: User) -> str:
     """A readable, non-secret name for a signed-in account: the masked email, else the label
     of its first login method. Never the opaque `m_…` id."""
     identity = user.identities.order_by("id").first()
-    return mask_email(user.email) or (
-        ExternalIdentity.Provider(identity.provider).label if identity else ""
-    )
+    return mask_email(user.email) or (provider_name(identity.provider) if identity else "")
 
 
 def account_kind(user: User) -> AccountKind:
@@ -251,10 +259,11 @@ class EmailTaken(Exception):
     pass
 
 
-def set_member_email(user: User, email: str, *, ip: str = "") -> None:
+def set_member_email(user: User, email: str, *, ip: str = "") -> bool:
     """The member types (or changes) their account email on 「내 계정」: it is theirs, not the
-    provider's word, so it is kept unverified. Raises InvalidEmail, EmailTaken (another member
-    has it). Callers pass members only."""
+    provider's word, so it is kept unverified. The same address again (case and surrounding
+    spaces aside, #158) changes nothing and keeps the verified mark; returns whether it changed.
+    Raises InvalidEmail, EmailTaken (another member has it). Callers pass members only."""
     cleaned = email.strip()
     try:
         validate_email(cleaned)
@@ -263,7 +272,11 @@ def set_member_email(user: User, email: str, *, ip: str = "") -> None:
     if len(cleaned) > EMAIL_MAX_LENGTH:
         raise InvalidEmail(cleaned)
     with transaction.atomic():
-        User.objects.select_for_update().filter(pk=user.pk).first()
+        lock_account(user.pk)
+        current = User.objects.values_list("email", flat=True).get(pk=user.pk)
+        if current.strip().lower() == cleaned.lower():
+            user.email = current
+            return False
         taken = (
             User.objects.alias(e=Lower("email"))
             .filter(e=cleaned.lower(), member__isnull=False, is_active=True)
@@ -276,3 +289,4 @@ def set_member_email(user: User, email: str, *, ip: str = "") -> None:
         user.save(update_fields=["email"])
         Member.objects.filter(user_id=user.pk).update(email_verified=False)
     audit.record(audit.MEMBER_EMAIL_CHANGED, actor=user.get_username(), ip=ip)
+    return True

@@ -15,10 +15,11 @@ from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from accounts.models import ExternalIdentity
-from accounts.session import OWNER_ENROLLMENT_NOTICE, safe_next
+from accounts.models import ExternalIdentity, TermsAgreement
+from accounts.session import OWNER_ENROLLMENT_NOTICE, add_login_notice, safe_next
 from adapters.clock import get_clock
 from core.http import client_ip
+from oauth.models import Client
 from services import audit, throttle
 from services.consents import connected_apps, disconnect_app
 from services.login import IP_RULE, locked_message
@@ -29,26 +30,29 @@ from services.members import (
     InvalidEmail,
     is_member,
     member_email_verified,
+    provider_name,
     set_member_email,
 )
 from services.social import (
+    ACCOUNT_HOME,
     PENDING_SECONDS,
     IdentityNotFound,
     LastIdentity,
     NotAMember,
     Purpose,
     account_login_next,
+    authorize_client,
     begin,
     complete,
     link_identity,
     may_link,
+    members_may_sign_in,
     pending_signup,
     provider_named,
     providers_with_email,
     read_pending,
     read_pending_signup,
     sign_in,
-    social_login_allowed,
     unlink_identity,
 )
 from services.social_providers import SocialLoginFailed, SocialProvider, configured_providers
@@ -63,23 +67,27 @@ PENDING_SIGNUP_KEY = "accounts.social_signup"
 # Where the login that just finished was headed, kept as long as a pending login lives, so a
 # second callback (back button, picking again) lands there instead of on a failure page (#123).
 JUST_SIGNED_IN_KEY = "accounts.social_signed_in"
+# Where the last pending sign-in was headed, kept 10 minutes after it is taken out, so a
+# callback with no pending login (back button after a cancel) still leads to that app's login
+# screen (#144). Dropped at the end of a login; a logout flushes the session.
+RECENT_NEXT_KEY = "accounts.social_recent_next"
 # Provider answers that mean "the person said no", not an attack: no throttle count.
 CANCELLED = frozenset({"access_denied", "consent_required", "interaction_required"})
 
 
-def social_login_target(next_url: str) -> tuple[Purpose, str] | None:
-    """The kind of social login a login screen for `next_url` offers, and where it lands:
-    sign in (or up) for an app that allows members, sign in to 「내 계정」 with no app (#126),
-    or none."""
-    if social_login_allowed(next_url):
+def social_login_target(next_url: str, app: Client | None) -> tuple[Purpose, str] | None:
+    """The kind of social login a login screen for `next_url` (whose `authorize_client` is
+    `app`) offers, and where it lands: sign in (or up) for an app that allows members, sign in
+    to 「내 계정」 with no app (#126), or none."""
+    if members_may_sign_in(app):
         return "login", next_url
     account_next = account_login_next(next_url)
     return ("account", account_next) if account_next else None
 
 
-def social_buttons(next_url: str | None) -> list[dict[str, str]]:
+def social_buttons(next_url: str | None, app: Client | None) -> list[dict[str, str]]:
     """Buttons for the login screen (see `social_login_target`)."""
-    target = social_login_target(next_url or "")
+    target = social_login_target(next_url or "", app)
     if target is None:
         return []
     query = urlencode({"next": target[1]})
@@ -105,14 +113,12 @@ def _sign_into(request: HttpRequest, user: User, next_url: str) -> HttpResponse:
     if not is_member(user) and not is_enrolled(user):
         # The owner before TOTP enrollment: enrolling needs the password, never a social
         # session. Say so on the login screen instead of signing in and out silently (#110).
-        messages.info(request, OWNER_ENROLLMENT_NOTICE)
+        add_login_notice(request, OWNER_ENROLLMENT_NOTICE)
         return redirect(_login_url(next_url))
     login(request, user, backend=BACKEND)  # also sets last_login, the ID token's auth_time
     drop_strong(request)  # a social login never opens the owner's admin and grants (#100)
-    request.session[JUST_SIGNED_IN_KEY] = {
-        "next": next_url,
-        "at": get_clock().now().timestamp(),
-    }
+    request.session.pop(RECENT_NEXT_KEY, None)
+    request.session[JUST_SIGNED_IN_KEY] = _note(next_url)
     if needs_terms(user):  # a new account, or a new version of the terms (#37)
         return (
             redirect("/terms?" + urlencode({"next": next_url})) if next_url else redirect("/terms")
@@ -120,9 +126,13 @@ def _sign_into(request: HttpRequest, user: User, next_url: str) -> HttpResponse:
     return redirect(next_url or "accounts:home")
 
 
-def _just_signed_in_next(request: HttpRequest) -> str:
-    """The `next` of the login that finished a moment ago in this session, or ""."""
-    note = request.session.get(JUST_SIGNED_IN_KEY)
+def _note(next_url: str) -> dict[str, str | float]:
+    return {"next": next_url, "at": get_clock().now().timestamp()}
+
+
+def _noted_next(request: HttpRequest, key: str) -> str:
+    """The `next` noted under `key` in the last 10 minutes (see `_note`), or ""."""
+    note = request.session.get(key)
     if not isinstance(note, dict):
         return ""
     started, target = note.get("at"), note.get("next")
@@ -158,7 +168,7 @@ def social_start(request: HttpRequest, provider: str) -> HttpResponse:
     next_url = safe_next(request, request.GET.get("next")) or ""
     if request.user.is_authenticated:
         return redirect(next_url or "accounts:home")
-    target = social_login_target(next_url)
+    target = social_login_target(next_url, authorize_client(next_url))
     if target is None:
         return redirect(_login_url(next_url))
     purpose, next_url = target
@@ -174,9 +184,15 @@ def social_callback(request: HttpRequest, provider: str) -> HttpResponse:
     raw = request.session.pop(PENDING_SOCIAL_KEY, None)  # one callback per start
     if raw is None and request.user.is_authenticated:
         # The login already finished (back button, picking again): not a failure (#123).
-        return redirect(_just_signed_in_next(request) or "accounts:home")
-    next_url = raw.get("next", "") if isinstance(raw, dict) else ""
-    next_url = next_url if isinstance(next_url, str) else ""
+        # A link flow noted 「내 계정」 when it started (#144).
+        return redirect(_noted_next(request, JUST_SIGNED_IN_KEY) or "accounts:home")
+    if isinstance(raw, dict):
+        next_url = raw.get("next", "")
+        next_url = next_url if isinstance(next_url, str) else ""
+        if raw.get("purpose") != "link":
+            request.session[RECENT_NEXT_KEY] = _note(next_url)
+    else:  # no pending login: the one taken out a moment ago, if any (#144)
+        next_url = _noted_next(request, RECENT_NEXT_KEY)
     ip_key = f"ip:{ip}"
     wait = throttle.check(IP_RULE, ip_key).retry_after
     if wait:
@@ -209,7 +225,7 @@ def social_callback(request: HttpRequest, provider: str) -> HttpResponse:
             audit.SOCIAL_LOGIN_FAILED, ip=ip, detail={"provider": provider, "reason": error.reason}
         )
         if error.reason == "no_account":
-            context = {"login_url": _login_url(pending["next"])}
+            context = {"login_url": _login_url(pending["next"])}  # withdrawn or never seen
             return render(request, "accounts/social_no_account.html", context)
         return _failed(request, provider, error.reason, next_url, status=403)
     if result.user is None:
@@ -237,11 +253,11 @@ def _finish_link(
     except NotAMember as error:
         raise PermissionDenied("only members and the owner link social logins") from error
     else:
-        label = ExternalIdentity.Provider(profile.provider).label
+        label = provider_name(profile.provider)
         if linked:
-            messages.success(request, f"{label} 로그인을 연결했습니다.")
+            messages.success(request, f"{label} 로그인 수단을 연결했습니다.")
         else:
-            messages.info(request, f"{label} 로그인은 이미 이 계정에 연결되어 있습니다.")
+            messages.info(request, f"{label} 로그인 수단은 이미 이 계정에 연결되어 있습니다.")
     return redirect("accounts:account")
 
 
@@ -263,18 +279,21 @@ def signup_confirm(request: HttpRequest) -> HttpResponse:
         assert result.user is not None
         return _sign_into(request, result.user, next_url)
     query = urlencode({"next": next_url})
-    labels = providers_with_email(profile)
+    linked = providers_with_email(profile)
     choices = [
         {"name": p.name, "label": p.label, "url": f"/login/{p.name}?{query}"}
         for p in configured_providers().values()
-        if p.label in labels
+        if p.name in linked
     ]
+    choices.sort(key=lambda c: linked.index(c["name"]))  # the order they were linked (#144)
     context = {
-        "existing": " · ".join(labels),
+        # The screens' names, as 「내 계정」 (#152); the buttons keep each provider's wording.
+        "existing": " · ".join(provider_name(name) for name in linked),
         "choices": choices,
-        "provider": ExternalIdentity.Provider(profile.provider).label,
+        "provider": provider_name(profile.provider),
         "email": profile.email,
         "may_create": waiting.may_create,
+        "login_url": _login_url(next_url),
     }
     return render(request, "accounts/signup_confirm.html", context)
 
@@ -322,16 +341,24 @@ def account(request: HttpRequest) -> HttpResponse:
         "email": user.email,
         "email_verified": member_email_verified(user),
         "identities": [
-            {"pk": i.pk, "label": i.get_provider_display(), "email": i.email} for i in linked
+            {"pk": i.pk, "label": provider_name(i.provider), "email": i.email, "since": i.linked_at}
+            for i in linked
         ],
         "can_unlink": is_owner or len(linked) > 1,
         "is_owner": is_owner,
         "link_choices": [
-            {"name": p.name, "label": p.label}
+            {"name": p.name, "label": provider_name(p.name)}
             for p in configured_providers().values()
             if p.name not in linked_providers
         ],
         "apps": [] if is_owner else connected_apps(user),
+        "agreements": []
+        if is_owner
+        else list(
+            TermsAgreement.objects.filter(user=user)
+            .select_related("document")
+            .order_by("agreed_at", "pk")
+        ),
     }
     return render(request, "accounts/account.html", context)
 
@@ -340,14 +367,18 @@ def account(request: HttpRequest) -> HttpResponse:
 @require_POST
 def set_email(request: HttpRequest) -> HttpResponse:
     user = _member_or_403(request)
+    email = request.POST.get("email", "")
     try:
-        set_member_email(user, request.POST.get("email", ""), ip=client_ip(request))
+        changed = set_member_email(user, email, ip=client_ip(request))
     except InvalidEmail:
         messages.error(request, "이메일 주소 형식이 맞지 않습니다.")
     except EmailTaken:
         messages.error(request, "이미 다른 계정에서 쓰는 이메일입니다.")
     else:
-        messages.success(request, "이메일을 저장했습니다.")
+        if changed:
+            messages.success(request, f"계정 이메일을 저장했습니다 ({user.email}).")
+        else:
+            messages.info(request, f"이메일이 바뀌지 않았습니다 ({user.email}).")
     return redirect("accounts:account")
 
 
@@ -355,8 +386,9 @@ def set_email(request: HttpRequest) -> HttpResponse:
 @require_POST
 def disconnect(request: HttpRequest, client_pk: int) -> HttpResponse:
     user = _member_or_403(request)
+    name = next((app.name for app in connected_apps(user) if app.client_id == client_pk), "")
     if disconnect_app(user, client_pk, ip=client_ip(request)):
-        messages.success(request, "앱 연결을 끊었습니다.")
+        messages.success(request, f"{name} 연결을 끊었습니다.")
     else:
         messages.info(request, "이미 연결이 끊어진 앱입니다.")
     return redirect("accounts:account")
@@ -372,6 +404,9 @@ def link_start(request: HttpRequest, provider: str) -> HttpResponse:
         return _step_up()
     url, pending = begin(social, "link", user_id=user.pk)
     request.session[PENDING_SOCIAL_KEY] = dict(pending)
+    # A repeated callback of this flow (finished or cancelled) lands on 「내 계정」, not on the
+    # app of an earlier login (#144).
+    request.session[JUST_SIGNED_IN_KEY] = _note(ACCOUNT_HOME)
     return redirect(url)
 
 
@@ -391,9 +426,7 @@ def unlink(request: HttpRequest, identity_id: int) -> HttpResponse:
     except NotAMember as error:
         raise PermissionDenied("for members only") from error
     else:
-        messages.success(
-            request, f"{ExternalIdentity.Provider(provider).label} 로그인 연결을 해제했습니다."
-        )
+        messages.success(request, f"{provider_name(provider)} 로그인 수단을 해제했습니다.")
     return redirect("accounts:account")
 
 

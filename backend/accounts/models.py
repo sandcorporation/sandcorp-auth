@@ -15,6 +15,10 @@ class TotpDevice(models.Model):
     # Time-step counter of the last accepted code; codes at or before it are refused (no replay).
     last_used_counter = models.BigIntegerField(null=True, blank=True)
 
+    class Meta:
+        verbose_name = "TOTP 장치"
+        verbose_name_plural = "TOTP 장치"
+
     def __str__(self) -> str:
         state = "등록됨" if self.confirmed_at else "등록 전"
         return f"TOTP 장치({state})"
@@ -43,6 +47,10 @@ class Member(models.Model):
     # When `members purge` erased the email, name, identities and agreements (ADR 0004).
     purged_at = models.DateTimeField("개인정보 삭제 시각", null=True, blank=True)
 
+    class Meta:
+        verbose_name = "일반 사용자"
+        verbose_name_plural = "일반 사용자"
+
     def __str__(self) -> str:
         return f"일반 사용자 {self.user_id}"
 
@@ -68,6 +76,8 @@ class ExternalIdentity(models.Model):
     linked_at = models.DateTimeField()
 
     class Meta:
+        verbose_name = "외부 로그인"
+        verbose_name_plural = "외부 로그인"
         constraints = [
             models.UniqueConstraint(
                 fields=["provider", "provider_sub"], name="accounts_identity_provider_sub_uniq"

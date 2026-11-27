@@ -16,6 +16,7 @@ from adapters.clock import get_clock
 from oauth.models import Consent, RefreshTokenFamily
 from oauth.tokens import revoke_family
 from services import audit
+from services.locks import lock_account
 
 
 def revoke_consent(consent: Consent, *, reason: str, actor: str, ip: str) -> bool:
@@ -23,6 +24,7 @@ def revoke_consent(consent: Consent, *, reason: str, actor: str, ip: str) -> boo
     Returns False when the consent was already revoked (nothing is done then)."""
     now = get_clock().now()
     with transaction.atomic():
+        lock_account(consent.user_id)  # the order is services.locks
         claimed = Consent.objects.filter(pk=consent.pk, revoked_at__isnull=True).update(
             revoked_at=now
         )

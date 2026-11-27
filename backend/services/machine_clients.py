@@ -18,7 +18,7 @@ from adapters.clock import get_clock
 from oauth.models import Client, Resource
 from services import audit
 from services.confidential_clients import SECRET_BYTES, IssuedClient
-from services.signing import random_token
+from services.signing import new_client_id, random_token
 
 MACHINE: Final = "machine"  # the `acct` claim of a machine token
 MACHINE_SUB_PREFIX: Final = "client:"
@@ -68,7 +68,7 @@ def create_machine_client(
         raise UnknownScope(f"{resource.url}의 스코프가 아닙니다: {' '.join(missing)}")
     secret = random_token(SECRET_BYTES)
     client = Client.objects.create(
-        client_id=random_token(),
+        client_id=new_client_id(),
         name=name[:200],
         redirect_uris=[],
         kind=Client.Kind.MACHINE,

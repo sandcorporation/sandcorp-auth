@@ -1,4 +1,5 @@
 import json
+from typing import Final, NotRequired, TypedDict
 from urllib.parse import urlencode, urlsplit
 
 from authlib.oauth2 import OAuth2Error
@@ -18,6 +19,7 @@ from oauth.models import Client, Consent, Scope
 from oauth.server import SandcorpRevocationEndpoint, authorization_server_metadata, server
 from services import audit, throttle
 from services.consents import revoke_consent
+from services.locks import lock_account
 from services.members import MemberTermsPending, is_member
 from services.oidc import (
     USERINFO_RESOURCE,
@@ -174,8 +176,7 @@ def authorize(request: HttpRequest) -> HttpResponse:
             detail=detail,
         )
         return _no_store(server.create_authorization_response(request, grant=grant))
-    if consent is None or not consent.covers(grant.scopes):
-        _grant_consent(user, grant, consent, ip)
+    if (consent is None or not consent.covers(grant.scopes)) and _grant_consent(user, grant, ip):
         audit.record(
             audit.CONSENT_GRANTED,
             actor=user.username,
@@ -186,25 +187,33 @@ def authorize(request: HttpRequest) -> HttpResponse:
     return _issue_code(request, grant, user, ip)
 
 
-def _grant_consent(
-    user: User, grant: SandcorpAuthorizationCodeGrant, previous: Consent | None, ip: str
-) -> Consent:
-    """Replace `previous` (if any) with a live consent for its scopes plus the requested ones.
-    `previous` is revoked like any consent, refresh token families included: the client is
-    getting a code under the new consent right now, so it loses nothing it cannot replace."""
+def _grant_consent(user: User, grant: SandcorpAuthorizationCodeGrant, ip: str) -> bool:
+    """Replace the live consent (if any) with one for its scopes plus the requested ones; False
+    when the live consent already covers them. The replaced consent is revoked like any consent,
+    refresh token families included: the client is getting a code under the new consent right
+    now, so it loses nothing it cannot replace."""
     now = get_clock().now()
     scopes = set(grant.scopes)
     with transaction.atomic():
+        # The account first (`services.locks`): the new consent's insert takes its row, and a
+        # code exchange under `previous` holds it while it waits for `previous` (#151).
+        lock_account(user.pk)
+        # Read under the lock: a second 「허락」 (a double click, another tab) finds the consent
+        # the first one gave and keeps it (#157).
+        previous = live_consent(user, grant.request.client, grant.resource)
+        if previous is not None and previous.covers(grant.scopes):
+            return False
         if previous is not None:
             scopes |= set(previous.scopes)
             revoke_consent(previous, reason="consent_replaced", actor=user.username, ip=ip)
-        return Consent.objects.create(
+        Consent.objects.create(
             user=user,
             client=grant.request.client,
             resource=grant.resource,
             scopes=sorted(scopes),
             granted_at=now,
         )
+    return True
 
 
 def _issue_code(
@@ -239,12 +248,7 @@ def _consent_screen(
     )
     user = request.user
     member = isinstance(user, User) and is_member(user)
-    if member and "login" in descriptions:
-        # The stored text is the owner-facing one; a member just signs in to the app.
-        descriptions["login"] = f"{client.name}에 로그인"
-    if member and "openid" in descriptions:
-        descriptions["openid"] = "계정 식별자"
-    scopes = [
+    scopes: list[_ConsentLine] = [
         {"name": name, "description": descriptions[name], "granted": name in granted}
         for name in grant.scopes
     ]
@@ -257,12 +261,15 @@ def _consent_screen(
     if member:
         assert isinstance(user, User)
         account_label = user.first_name or user.email or "Sandcorp 계정"
+        scopes = sorted((_member_line(line, client, user) for line in scopes), key=_member_order)
     else:
         account_label = user.get_username()
     context = {
         "account_label": account_label,
         "client_name": client.name,
-        "client_id": client.client_id if client.registered_via == Client.Via.CIMD else "",
+        "client_id": client.client_id
+        if client.registered_via == Client.Via.CIMD and not member
+        else "",
         "is_member": member,
         "shares": shares,
         "resource": grant.resource,
@@ -271,6 +278,37 @@ def _consent_screen(
         "action": request.get_full_path(),
     }
     return _no_store(render(request, "oauth/consent.html", context))
+
+
+class _ConsentLine(TypedDict):
+    name: str
+    description: str
+    granted: bool
+    value: NotRequired[str]  # a member's own value that goes to the app (or 「없음」)
+    tip: NotRequired[str]
+
+
+# A member's consent lines: one thing that goes to the app per line, login info in this order.
+_MEMBER_ORDER: Final = ("login", "openid", "profile", "email")
+
+
+def _member_line(line: _ConsentLine, client: Client, user: User) -> _ConsentLine:
+    match line["name"]:
+        case "login":
+            # The stored text is the owner-facing one; a member just signs in to the app.
+            return {**line, "description": f"{client.name}에 로그인"}
+        case "openid":
+            return {**line, "description": "이 앱에서 나를 알아보는 번호", "tip": "계정 식별자"}
+        case "profile":
+            return {**line, "description": "이름", "value": user.get_full_name() or "없음"}
+        case "email":
+            return {**line, "description": "이메일", "value": user.email or "없음"}
+    return line
+
+
+def _member_order(line: _ConsentLine) -> int:
+    name = line["name"]
+    return _MEMBER_ORDER.index(name) if name in _MEMBER_ORDER else len(_MEMBER_ORDER)
 
 
 def _authorization_error(request: HttpRequest, error: OAuth2Error) -> HttpResponse:

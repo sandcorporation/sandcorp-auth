@@ -48,6 +48,8 @@ class SigningKey(models.Model):
     active_marker = _live_marker(Q(active=True))
 
     class Meta:
+        verbose_name = "서명 키"
+        verbose_name_plural = "서명 키"
         constraints = [
             models.UniqueConstraint(fields=["active_marker"], name="oauth_signingkey_single_active")
         ]
@@ -61,6 +63,10 @@ class Resource(models.Model):
 
     name = models.CharField(max_length=100)
     url = models.URLField(unique=True)
+
+    class Meta:
+        verbose_name = "리소스"
+        verbose_name_plural = "리소스"
 
     def __str__(self) -> str:
         return f"{self.name} ({self.url})"
@@ -84,6 +90,8 @@ class Scope(models.Model):
     members_allowed = models.BooleanField("일반 사용자 허용", default=False)
 
     class Meta:
+        verbose_name = "스코프"
+        verbose_name_plural = "스코프"
         constraints = [
             models.UniqueConstraint(fields=["resource", "name"], name="oauth_scope_unique_name"),
             models.CheckConstraint(
@@ -178,6 +186,8 @@ class Client(ClientMixin, models.Model):  # type: ignore[misc]  # authlib has no
     metadata_document = models.JSONField(null=True, blank=True)
 
     class Meta:
+        verbose_name = "클라이언트"
+        verbose_name_plural = "클라이언트"
         constraints = [
             # Login info for a public client only when the owner registered it (ADR 0007).
             models.CheckConstraint(
@@ -260,6 +270,8 @@ class Consent(models.Model):
     live_marker = _live_marker(Q(revoked_at__isnull=True))
 
     class Meta:
+        verbose_name = "동의"
+        verbose_name_plural = "동의"
         constraints = [
             models.UniqueConstraint(
                 fields=["user", "client", "resource", "live_marker"],
@@ -298,7 +310,12 @@ class AuthorizationCode(AuthorizationCodeMixin, models.Model):  # type: ignore[m
     # password + TOTP (#100): only member-level grants, and its tokens carry `amr: ["fed"]`.
     via_social = models.BooleanField(default=False)
     created_at = models.DateTimeField()
+
     used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "인가 코드"
+        verbose_name_plural = "인가 코드"
 
     def __str__(self) -> str:
         return f"{self.client.name} {self.created_at:%Y-%m-%d %H:%M:%S}"
@@ -342,6 +359,8 @@ class RefreshTokenFamily(models.Model):
     live_marker = _live_marker(Q(revoked_at__isnull=True))
 
     class Meta:
+        verbose_name = "리프레시 토큰 패밀리"
+        verbose_name_plural = "리프레시 토큰 패밀리"
         constraints = [
             models.UniqueConstraint(
                 fields=["consent", "live_marker"], name="oauth_refresh_family_single_live"
@@ -372,6 +391,10 @@ class RefreshToken(TokenMixin, models.Model):  # type: ignore[misc]  # authlib h
     replaced_by = models.OneToOneField(
         "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="replaces"
     )
+
+    class Meta:
+        verbose_name = "리프레시 토큰"
+        verbose_name_plural = "리프레시 토큰"
 
     def __str__(self) -> str:
         return f"{self.family} {self.issued_at:%Y-%m-%d %H:%M:%S}"

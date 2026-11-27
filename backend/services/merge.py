@@ -26,6 +26,7 @@ from adapters.clock import get_clock
 from oauth.models import Client, Consent, RefreshTokenFamily
 from oauth.tokens import revoke_family
 from services import audit
+from services.locks import lock_account
 from services.members import is_member
 from services.webhooks import enqueue_user_merged
 
@@ -81,8 +82,9 @@ def merge_member_into_owner(
     docstring). With `dry_run`, only count. Raises MergeRefused; then nothing is changed."""
     with transaction.atomic():
         source, target = _accounts(from_username, into_username)
-        # Lock both accounts: a link, a login or a second merge waits for this one.
-        list(User.objects.select_for_update().filter(pk__in=[source.pk, target.pk]))
+        # Lock both accounts first (services.locks): a link, a login, a refresh or a second
+        # merge waits for this one.
+        lock_account(source.pk, target.pk)
         identities = list(ExternalIdentity.objects.filter(user=source).order_by("pk"))
         providers = sorted({identity.provider for identity in identities})
         taken = set(
@@ -119,8 +121,7 @@ def merge_member_into_owner(
         if dry_run:
             return report
 
-        for family in families:
-            revoke_family(family, REVOKE_REASON)
+        # Consents before families (services.locks).
         for consent in consents:
             kept = existing.get((consent.client_id, consent.resource_id))
             if kept is None:
@@ -128,6 +129,8 @@ def merge_member_into_owner(
             else:
                 scopes = sorted(set(kept.scopes) | set(consent.scopes))
                 Consent.objects.filter(pk=kept.pk).update(scopes=scopes)
+        for family in families:
+            revoke_family(family, REVOKE_REASON)
         ExternalIdentity.objects.filter(user=source).update(user=target)
         queued = enqueue_user_merged(source.username, target.username, clients)
         audit.record(

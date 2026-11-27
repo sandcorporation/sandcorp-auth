@@ -7,9 +7,12 @@ MySQL/InnoDB at READ COMMITTED: one active signing key, one live consent and one
 token family (unique indexes over generated marker columns, since MySQL has no partial
 indexes), one account per external identity (#35), throttle counters without deadlocks
 (upsert, not INSERT IGNORE), one winner for an authorization code or a refresh token, and no
-live refresh token family left on a consent revoked during a code exchange (#111).
+live refresh token family left on a consent revoked during a code exchange (#111), and no
+deadlock between a code exchange and a withdrawal, a merge or a wider consent, or between a
+refresh and a merge (#145, #151: the lock order of `services.locks`).
 """
 
+import copy
 import itertools
 import threading
 from collections.abc import Callable, Sequence
@@ -23,12 +26,14 @@ from django.db import IntegrityError, connection
 from django.test import Client
 
 from accounts.models import ExternalIdentity
+from audit.models import AuditEvent
 from oauth.models import Client as OAuthClient
 from oauth.models import Consent, RefreshTokenFamily, Resource, SigningKey, WebhookDelivery
 from oauth.tokens import live_family
 from services import audit, throttle
 from services.consents import revoke_consent
 from services.members import ExternalProfile, IdentityTaken, create_member
+from services.merge import merge_member_into_owner
 from services.signing import ActiveSigningKeyExists, create_signing_key
 from services.social import SignInResult, link_identity, sign_in, unlink_identity
 from services.webhooks import deliver_due, set_webhook
@@ -37,11 +42,13 @@ from tests.conftest import (
     PORTFOLIO,
     FakeWebhooks,
     FrozenClock,
+    authorize_query,
     exchange_code,
     make_member,
     obtain_authorization_code,
     obtain_tokens,
     refresh,
+    use_https,
 )
 
 # serialized_rollback: the flush after each test would wipe the resources and scopes that
@@ -247,8 +254,6 @@ def test_a_consent_revoked_during_a_code_exchange_keeps_no_live_family(
 def test_concurrent_withdrawals_withdraw_once_and_queue_one_webhook(
     dcr_client: OAuthClient, fake_webhooks: FakeWebhooks
 ) -> None:
-    from audit.models import AuditEvent
-
     member = make_member()
     set_webhook(dcr_client, url="https://site.example/hook", rotate_secret=False, actor="t")
     Consent.objects.create(
@@ -268,3 +273,134 @@ def test_concurrent_withdrawals_withdraw_once_and_queue_one_webhook(
     reports = race(deliver_due)
     assert sum(r.delivered for r in reports if not isinstance(r, BaseException)) == 1, reports
     assert len(fake_webhooks.sent) == 1
+
+
+def _member_code(oauth_client: OAuthClient, provider_sub: str) -> tuple[User, str, str]:
+    member = make_member("kakao", provider_sub)
+    browser = Client()
+    browser.force_login(member)
+    code, verifier = obtain_authorization_code(browser, oauth_client, scope="login")
+    return member, code, verifier
+
+
+def _exchange_status(oauth_client: OAuthClient, code: str, verifier: str) -> int:
+    return _exchange(oauth_client, code, verifier).status_code
+
+
+def test_a_code_exchange_racing_a_withdrawal_or_a_merge_ends_without_deadlock(
+    owner: User, dcr_client: OAuthClient, signing_key: SigningKey, frozen_clock: FrozenClock
+) -> None:
+    """#145: the exchange locks the account before the consent, as a withdrawal and a merge do;
+    the other order deadlocked (one side rolled back). Either the exchange comes first (and its
+    family is revoked) or it waits and is refused."""
+    OAuthClient.objects.filter(pk=dcr_client.pk).update(allows_members=True)
+    dcr_client.refresh_from_db()
+    for index in range(ROUNDS):
+        member, code, verifier = _member_code(dcr_client, f"91{index}")
+        if index % 2:
+            other: Callable[[], object] = partial(
+                merge_member_into_owner, member.username, owner.username
+            )
+        else:
+            other = partial(withdraw_member, User.objects.get(pk=member.pk))
+        jobs: list[Callable[[], object]] = [
+            partial(_exchange_status, dcr_client, code, verifier),
+            other,
+        ]
+
+        results = race(partial(_take_turn, jobs, itertools.count()), threads=2)
+
+        assert all(not isinstance(r, BaseException) for r in results), results
+        assert [r for r in results if isinstance(r, int) and not isinstance(r, bool)] in (
+            [200],
+            [400],
+        ), results
+        assert not RefreshTokenFamily.objects.filter(user=member, revoked_at=None).exists()
+        ExternalIdentity.objects.filter(user=owner).delete()
+
+
+def _status(response: TestResponse) -> int:
+    return response.status_code
+
+
+def _refresh_status(oauth_client: OAuthClient, token: str) -> int:
+    return refresh(Client(), oauth_client, token).status_code
+
+
+def test_a_code_exchange_racing_a_wider_consent_ends_without_deadlock(
+    logged_in_client: Client, owner: User, dcr_client: OAuthClient, signing_key: SigningKey
+) -> None:
+    """#151: allowing a wider consent replaces the old one (revokes it, inserts the new one)
+    while a code under the old one is exchanged. Both lock the account first; the other order
+    deadlocked (one side answered 500)."""
+    wider = "/authorize?" + authorize_query(dcr_client, scope="admin login")
+    for _ in range(ROUNDS):
+        for live in Consent.objects.filter(user=owner, revoked_at__isnull=True):
+            revoke_consent(live, reason="consent_revoked", actor="t", ip="")
+        code, verifier = obtain_authorization_code(logged_in_client, dcr_client)
+        jobs: list[Callable[[], object]] = [
+            partial(_exchange_status, dcr_client, code, verifier),
+            lambda: _status(logged_in_client.post(wider, {"decision": "allow"})),
+        ]
+
+        results = race(partial(_take_turn, jobs, itertools.count()), threads=2)
+
+        assert all(not isinstance(r, BaseException) for r in results), results
+        statuses = sorted(r for r in results if isinstance(r, int))
+        assert statuses in ([200, 302], [302, 400]), results
+        revoked = Consent.objects.filter(user=owner, revoked_at__isnull=False)
+        assert not RefreshTokenFamily.objects.filter(consent__in=revoked, revoked_at=None).exists()
+
+
+def test_allowing_the_same_consent_twice_at_once_gives_both_a_code(
+    logged_in_client: Client, owner: User, dcr_client: OAuthClient, signing_key: SigningKey
+) -> None:
+    """#157: 「허락」 clicked twice (or in two tabs) at once. Both requests read no live consent
+    before the account lock; the second must read again after it and reuse the first's consent
+    (the unique live consent constraint answered 500)."""
+    screen = "/authorize?" + authorize_query(dcr_client, scope="admin")
+    use_https(logged_in_client)
+    twin = use_https(Client())
+    twin.cookies = copy.deepcopy(logged_in_client.cookies)
+    for _ in range(ROUNDS):
+        for live in Consent.objects.filter(user=owner, revoked_at__isnull=True):
+            revoke_consent(live, reason="consent_revoked", actor="t", ip="")
+        jobs: list[Callable[[], object]] = [
+            lambda: _status(logged_in_client.post(screen, {"decision": "allow"})),
+            lambda: _status(twin.post(screen, {"decision": "allow"})),
+        ]
+
+        results = race(partial(_take_turn, jobs, itertools.count()), threads=2)
+
+        assert results == [302, 302], results
+        live_consents = Consent.objects.filter(
+            user=owner, client=dcr_client, revoked_at__isnull=True
+        )
+        assert [c.scopes for c in live_consents] == [["admin"]]
+    assert AuditEvent.objects.filter(kind=audit.CONSENT_GRANTED).count() == ROUNDS
+
+
+def test_a_refresh_racing_a_merge_ends_without_deadlock(
+    owner: User, dcr_client: OAuthClient, signing_key: SigningKey, frozen_clock: FrozenClock
+) -> None:
+    """#151: a merge revokes the member's families and deletes its tokens while its app
+    rotates a refresh token. Both lock the account first; the other order deadlocked."""
+    OAuthClient.objects.filter(pk=dcr_client.pk).update(allows_members=True)
+    dcr_client.refresh_from_db()
+    for index in range(ROUNDS):
+        member, code, verifier = _member_code(dcr_client, f"92{index}")
+        response = _exchange(dcr_client, code, verifier)
+        assert response.status_code == 200, response.content
+        token = str(response.json()["refresh_token"])
+        jobs: list[Callable[[], object]] = [
+            partial(_refresh_status, dcr_client, token),
+            partial(merge_member_into_owner, member.username, owner.username),
+        ]
+
+        results = race(partial(_take_turn, jobs, itertools.count()), threads=2)
+
+        assert all(not isinstance(r, BaseException) for r in results), results
+        assert [r for r in results if isinstance(r, int)] in ([200], [400]), results
+        assert not User.objects.filter(pk=member.pk).exists()
+        assert not RefreshTokenFamily.objects.filter(user=owner, revoked_at=None).exists()
+        ExternalIdentity.objects.filter(user=owner).delete()

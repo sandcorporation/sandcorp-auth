@@ -124,17 +124,19 @@ compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운�
 
 ## 3. 운영 명령
 
+`clients … --client-id`는 `--client-id=<id>`처럼 붙여 쓴다. #155 전에 만든 클라이언트 중 id가 `-`로 시작하는 것은 띄어 쓰면 옵션으로 읽혀 `expected one argument`로 끝난다(새로 만드는 id는 `-`로 시작하지 않는다).
+
 | 할 일 | 명령 / 자리 | 설명 |
 | --- | --- | --- |
 | 서명 키 회전 | `manage signing_keys rotate` | 새 활성 키를 만들고 이전 키는 **10분 동안** JWKS에 남긴다(그동안 이전 키로 서명된 액세스 토큰(수명 10분)이 검증된다). 사이트는 모르는 `kid`를 만나면 JWKS를 다시 받는다 |
 | 서명 키 목록 | `manage signing_keys list` | `kid`·상태(active/retired)·만든 시각·은퇴 시각 |
 | 비밀번호 초기화 | `docker exec -it sandcorp-auth-web-1 python manage.py owner set-password` | 프롬프트로 새 비밀번호 |
 | TOTP 초기화(폰 분실) | `manage owner reset-totp` | 장치를 지운다. 다음 로그인에서 다시 등록한다 |
-| 클라이언트 시크릿 재발급 | `manage clients rotate-secret --client-id <id>`(기밀·기계) 또는 admin 클라이언트 변경 화면 「시크릿 재발급」 | 옛 시크릿은 **즉시** 무효. 새 시크릿을 사이트 `.env`에 넣고 사이트를 다시 배포할 때까지 그 사이트 관리 화면 로그인이 실패한다 |
+| 클라이언트 시크릿 재발급 | `manage clients rotate-secret --client-id=<id>`(기밀·기계) 또는 admin 클라이언트 변경 화면 「시크릿 재발급」 | 옛 시크릿은 **즉시** 무효. 새 시크릿을 사이트 `.env`에 넣고 사이트를 다시 배포할 때까지 그 사이트 관리 화면 로그인이 실패한다 |
 | 기계 클라이언트 만들기(#76) | `manage clients create-machine --name <이름> --resource <리소스 URL> --scope "<스코프> [<스코프> …]"` (`--scope`는 여러 번 줘도 된다) | 사람 없이 `grant_type=client_credentials`로 토큰을 받는 서비스용(예: promptlab 스모크, 리소스 `https://promptlab.sandcorp.co.kr/api`). 리소스는 등록된 것, 스코프는 그 리소스의 것만(아니면 종료 코드 1). `client_id`·`client_secret`은 **한 번만** 출력(DB엔 해시). 토큰은 10분, refresh 없음, `sub=client:<client_id>`·`acct=machine`(`docs/resource-server-token-validation.md` 12절). 감사 `client.created`(kind=machine), 발급마다 `token.issued`. 재발급은 위 `rotate-secret`, 끄기는 admin 「비활성」 |
 | PC 프로그램(loopback) 공개 클라이언트 만들기(#102, ADR 0007) | `manage clients create-public --name <이름> --redirect-uri http://127.0.0.1:<포트>/<경로> [--redirect-uri …] [--login-info] [--allow-members]` | 한 PC에 깔려 loopback에서 도는 프로그램용. 시크릿 없음·PKCE S256·`token_endpoint_auth_method=none`. redirect는 `127.0.0.1`·`[::1]`의 http, 포트를 꼭 적고 **포트까지 정확히 일치**(`localhost`·https는 종료 코드 1). `--login-info`면 `openid`·`profile`·`email`을 받고(없으면 `invalid_scope`), 로그인마다 동의 화면이 뜬다. 표시는 만들 때만 정한다(admin 읽기 전용, DCR·CIMD에는 켤 수 없다). 기본은 대표만(`--allow-members`로 일반 사용자). 감사 `client.created`(kind=public, login_info). 끄기는 admin 「비활성」. 예: `manage clients create-public --name "내 프로그램" --redirect-uri http://127.0.0.1:8090/auth/callback --login-info` |
 | 클라이언트 목록 | `manage clients list` | `client_id  kind  registered_via  active|inactive  name  redirect_uris  members=on|off  webhook=…[  login_info=on]` (기계 클라이언트는 redirect_uris 자리에 `resource=<URL> scope=<스코프…>`) |
-| 일반 사용자 허용 켜기·끄기 | `manage clients members --client-id <id> --allow` / `--deny`, 만들 때 `create-confidential … --allow-members`, 또는 admin 클라이언트 변경 화면 「일반 사용자 허용」 | 기본 꺼짐. 켜진 클라이언트만 일반 사용자(소셜 로그인 계정)에게 코드·토큰을 준다(ADR 0003). 감사 `client.members_changed`. 대표만 받는 기존 사이트(portfolio, 뉴스, metrics, oauth2-proxy)는 켜지 않는다 |
+| 일반 사용자 허용 켜기·끄기 | `manage clients members --client-id=<id> --allow` / `--deny`, 만들 때 `create-confidential … --allow-members`, 또는 admin 클라이언트 변경 화면 「일반 사용자 허용」 | 기본 꺼짐. 켜진 클라이언트만 일반 사용자(소셜 로그인 계정)에게 코드·토큰을 준다(ADR 0003). 감사 `client.members_changed`. 대표만 받는 기존 사이트(portfolio, 뉴스, metrics, oauth2-proxy)는 켜지 않는다 |
 | 스코프의 일반 사용자 허용 켜기·끄기(#47) | `manage scopes members --resource <url> --name <scope> --allow` / `--deny`, 또는 admin 리소스 변경 화면의 스코프 줄 「일반 사용자 허용」 | 기본 꺼짐. 켜진 스코프는 그 리소스를 요청한 일반 사용자도 받는다(리소스 기준 — 다른 리소스의 같은 이름은 상관없다). `admin`·`editor`는 켤 수 없다(종료 코드 1). 감사 `scope.members_changed`. Flow MCP: `manage scopes members --resource https://flow.sandcorp.co.kr/mcp --name flow.read --allow`, 같은 식으로 `--name flow.write` |
 | 스코프 목록 | `manage scopes list [--resource <url>]` | `리소스 URL  스코프  members=on|off`(탭 구분) |
 | 클라이언트 폐기 | admin → 클라이언트(`/<admin>/oauth/client/`) → 고르고 action 「선택한 클라이언트 폐기(비활성)」 | 이후 인가·토큰 요청이 거부된다 |
@@ -145,7 +147,7 @@ compose가 직접 넣으므로 `.env`에 두지 않는 것: `DJANGO_DEBUG`(운�
 | 대표 이메일·이름(OIDC) | `manage owner set-email --email <주소>` · `manage owner set-name --name <이름>` | ID 토큰·userinfo의 `email`(+`email_verified`)·`name`. 비우면 클레임이 빠진다. oauth2-proxy는 email이 없으면 로그인을 막으므로 forward auth 전에 넣는다 |
 | 자원·스코프 추가 | admin → 자원(`/<admin>/oauth/resource/`) | 스코프는 자원 변경 화면 아래 인라인 |
 | 약관 새 버전 등록 | `manage terms add --kind terms|privacy --doc-version <이름> --effective YYYY-MM-DD --url <공개 주소>` 또는 admin → 약관 문서(`/<admin>/accounts/termsdocument/`) 「추가」 | 시행일이 되면 그 버전이 현재 버전이 되고, 아직 동의하지 않은 일반 사용자는 다음 로그인·`/authorize`에서 동의 화면을 본다(그 전까지 `/token`·리프레시도 `invalid_grant`). 등록한 버전은 고치거나 지울 수 없다. 감사 `terms.registered`. 10절 |
-| 웹훅 등록·비밀 재발급 | `manage clients webhook --client-id <id> --url https://…`(처음이면 비밀도 발급) / `--rotate-secret` / `--remove`, 또는 admin 클라이언트 변경 화면 「웹훅 URL」·「웹훅 비밀 재발급」 | 탈퇴한 일반 사용자를 알리는 `user.deleted`를 받을 주소. 비밀은 한 번만 출력된다(DB엔 Fernet 암호문). 감사 `client.webhook_changed`. 11절 |
+| 웹훅 등록·비밀 재발급 | `manage clients webhook --client-id=<id> --url https://…`(처음이면 비밀도 발급) / `--rotate-secret` / `--remove`, 또는 admin 클라이언트 변경 화면 「웹훅 URL」·「웹훅 비밀 재발급」 | 탈퇴한 일반 사용자를 알리는 `user.deleted`를 받을 주소. 비밀은 한 번만 출력된다(DB엔 Fernet 암호문). 감사 `client.webhook_changed`. 11절 |
 | 웹훅 전송·대기열 보기 | `manage webhooks deliver` / `manage webhooks list` | cron 5분마다(11절). `list`는 아직 못 보낸 것과 포기한 것(`gave_up`)을 보인다 |
 | 보유 기간 정리 | `manage members purge [--dry-run]` | cron 하루 한 번(11절). 탈퇴 30일 지난 계정의 개인정보, 1년 지난 감사 기록, 30일 지난 끝난 웹훅 전송, 하루 넘게 쉰 요청 제한 카운터를 지운다(ADR 0004) |
 | 일반 사용자 계정을 대표에 합치기 | `manage members merge --from <m_…> --into <대표 username> [--dry-run]` | 대장 몫. 소셜 로그인·앱 동의를 대표로 옮기고, 리프레시 토큰·세션을 끊고, `user.merged`를 보낸 뒤 계정을 지운다. 감사 `member.merged`. 11절 |
@@ -371,7 +373,7 @@ auth는 새 앱을 만들지 않고 codemit이 쓰는 **기존 카카오 비즈 
 ### 넣은 뒤 확인
 
 1. `.env`에 `KAKAO_CLIENT_ID`·`KAKAO_CLIENT_SECRET`(GitHub를 켤 때는 `GITHUB_CLIENT_ID`·`GITHUB_CLIENT_SECRET`도)을 넣고 재배포한다(Google 두 값은 비워 둔다).
-2. 일반 사용자를 허용한 클라이언트(`clients members --client-id <id> --allow`)의 `/authorize`로 가면 로그인 화면에 「Kakao로 계속하기」가 보인다(Google은 보류라 없다). 허용하지 않은 클라이언트나 `/login`을 바로 열면 비밀번호 폼만 보인다.
+2. 일반 사용자를 허용한 클라이언트(`clients members --client-id=<id> --allow`)의 `/authorize`로 가면 로그인 화면에 「Kakao로 계속하기」가 보인다(Google은 보류라 없다). 허용하지 않은 클라이언트나 `/login`을 바로 열면 비밀번호 폼만 보인다.
 3. 각 버튼으로 끝까지 로그인해 본 뒤 admin의 감사 로그에 `member.created`·`login.social_succeeded`가 남는지 본다. 실패하면 `login.social_failed`의 `reason`을 본다(`google_token_status_400`·`kakao_token_status_401`·`github_no_access_token`이면 대개 Redirect URI나 시크릿 불일치).
 
 ## 10. 약관 문서(#37)
@@ -416,7 +418,7 @@ docker exec -it sandcorp-auth-web-1 python manage.py terms list   # 두 줄 모�
 ### 웹훅 붙이기(사이트마다)
 
 1. 사이트가 받는 엔드포인트를 만든다(검증 규칙 `docs/resource-server-token-validation.md` 11절).
-2. `docker exec -it sandcorp-auth-web-1 python manage.py clients webhook --client-id <id> --url https://<사이트>/…` → 출력된 `webhook_secret`을 사이트 env에 넣는다(다시 볼 수 없다).
+2. `docker exec -it sandcorp-auth-web-1 python manage.py clients webhook --client-id=<id> --url https://<사이트>/…` → 출력된 `webhook_secret`을 사이트 env에 넣는다(다시 볼 수 없다).
 3. `clients list`의 마지막 열이 `webhook=<주소>`인지 본다.
 4. 비밀이 샜으면 `--rotate-secret`(옛 비밀 즉시 무효), 웹훅을 끄려면 `--remove`.
 

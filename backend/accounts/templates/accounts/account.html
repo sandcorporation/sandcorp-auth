@@ -5,19 +5,23 @@
 <h1>내 계정</h1>
 <p class="auth-lead">{% if display_name %}{{ display_name }} 님의 Sandcorp 계정입니다.{% else %}Sandcorp 계정 설정입니다.{% endif %}</p>
 {% for message in messages %}
-<div class="sc-alert{% if message.level_tag == 'error' %} sc-alert--error{% endif %} auth-alert" role="{% if message.level_tag == 'error' %}alert{% else %}status{% endif %}">{{ message }}</div>
+<div class="sc-alert{% if message.level_tag == 'error' %} sc-alert--error{% endif %} auth-alert" role="{% if message.level_tag == 'error' %}alert{% else %}status{% endif %}"{% if forloop.first %} tabindex="-1" autofocus{% endif %}>{{ message }}</div>
 {% endfor %}
 
 <section class="auth-section" data-slot="identities">
   <h2>로그인 수단</h2>
+  {% if identities %}
   <ul class="sc-list">
     {% for i in identities %}
     <li>
-      <span><span class="sc-list-title">{{ i.label }}</span>{% if i.email %} <span class="auth-meta-text">{{ i.email }}</span>{% endif %}</span>
+      <span><span class="sc-list-title">{{ i.label }}</span>{% if i.email %} <span class="auth-meta-text">{{ i.email }}</span>{% else %} <span class="auth-meta-text">연결 {{ i.since|date:"Y-m-d" }}</span>{% endif %}</span>
       {% if can_unlink %}<form method="post" action="/account/identities/{{ i.pk }}/unlink">{% csrf_token %}<button type="submit" class="sc-btn sc-btn--sm sc-btn--secondary" aria-label="{{ i.label }} 로그인 해제">해제</button></form>{% endif %}
     </li>
     {% endfor %}
   </ul>
+  {% else %}
+  <p class="auth-meta-text">연결된 로그인 수단이 없습니다.</p>
+  {% endif %}
   {% if link_choices %}
   <div class="auth-inline auth-subtle">
     {% for p in link_choices %}
@@ -55,6 +59,22 @@
   </ul>
   {% else %}
   <p class="auth-meta-text">연결된 앱이 없습니다.</p>
+  {% endif %}
+</section>
+
+<section class="auth-section" data-slot="agreements">
+  <h2>동의한 약관</h2>
+  {% if agreements %}
+  <ul class="sc-list">
+    {% for a in agreements %}
+    <li>
+      <span><a class="sc-list-title" href="{{ a.document.url }}" target="_blank" rel="noopener">{{ a.document.get_kind_display }}</a>
+        <span class="auth-meta-text auth-scope-desc">{{ a.document.version }} · {{ a.agreed_at|date:"Y-m-d H:i" }} 동의</span></span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="auth-meta-text">동의한 약관이 없습니다.</p>
   {% endif %}
 </section>
 

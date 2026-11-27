@@ -70,6 +70,31 @@ def test_member_sets_an_email_and_it_stays_after_reload(
     assert AuditEvent.objects.filter(kind=audit.MEMBER_EMAIL_CHANGED, actor=member.username)
 
 
+def test_saving_the_same_email_keeps_it_verified(member_client: Client, member: User) -> None:
+    """#158: the same address (case and surrounding spaces aside) changes nothing."""
+    Member.objects.filter(user=member).update(email_verified=True)
+    same = "  " + member.email.upper() + " "
+    response = member_client.post("/account/email", {"email": same})
+    assert response.status_code == 302
+    before = member.email
+    member.refresh_from_db()
+    assert member.email == before
+    assert Member.objects.get(user=member).email_verified is True
+    body = page(member_client)
+    assert "이메일이 바뀌지 않았습니다" in body and "이메일을 저장했습니다" not in body
+    assert "로그인 제공자가 확인한 주소입니다" in body
+    assert not AuditEvent.objects.filter(kind=audit.MEMBER_EMAIL_CHANGED, actor=member.username)
+
+
+def test_an_account_without_sign_in_methods_says_so(logged_in_client: Client) -> None:
+    """#158: the owner with no social login sees an empty state, not a bare list."""
+    assert "연결된 로그인 수단이 없습니다" in logged_in_client.get("/account").content.decode()
+
+
+def test_an_account_with_sign_in_methods_has_no_empty_state(member_client: Client) -> None:
+    assert "연결된 로그인 수단이 없습니다" not in page(member_client)
+
+
 def test_member_without_an_email_can_add_one(member_client: Client, db: None) -> None:
     nobody = make_member("kakao", "777", email="", name="이메일 없음")
     member_client.force_login(nobody)
@@ -129,7 +154,7 @@ def test_connected_app_is_listed_and_disconnect_revokes_consent(
     event = AuditEvent.objects.get(kind=audit.CONSENT_REVOKED)
     assert event.detail["reason"] == "user_disconnected"
     body = page(member_client)
-    assert "앱 연결을 끊었습니다" in body and "연결된 앱이 없습니다" in body
+    assert f"{app.name} 연결을 끊었습니다" in body and "연결된 앱이 없습니다" in body
     # A second press changes nothing and says so.
     member_client.post(disconnect)
     assert "이미 연결이 끊어진 앱" in page(member_client)
