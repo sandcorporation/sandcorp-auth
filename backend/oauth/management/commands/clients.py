@@ -1,6 +1,7 @@
 from argparse import ArgumentParser
+from typing import NoReturn
 
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand, CommandError, CommandParser
 
 from oauth.models import Client
 from services.confidential_clients import (
@@ -14,6 +15,17 @@ from services.public_clients import create_public_client
 from services.webhooks import InvalidWebhookUrl, set_webhook
 
 ACTOR = "manage.py clients"
+CLIENT_ID_DASH_HINT = "`-`로 시작하는 client_id는 --client-id=<id> 꼴로 붙여 쓴다"
+
+
+class _ActionParser(CommandParser):
+    """Sub-command parser: when `--client-id` lost its value, say how to pass a `-…` id (#155)."""
+
+    def error(self, message: str) -> NoReturn:
+        if "--client-id" in message:
+            message = f"{message} ({CLIENT_ID_DASH_HINT})"
+        super().error(message)
+        raise CommandError(message)  # stubs type CommandParser.error as returning; it never does
 
 
 class Command(BaseCommand):
@@ -27,7 +39,7 @@ class Command(BaseCommand):
     )
 
     def add_arguments(self, parser: ArgumentParser) -> None:
-        actions = parser.add_subparsers(dest="action", required=True)
+        actions = parser.add_subparsers(dest="action", required=True, parser_class=_ActionParser)
         create = actions.add_parser("create-confidential", help="기밀 클라이언트를 만든다")
         create.add_argument("--name", required=True)
         create.add_argument(

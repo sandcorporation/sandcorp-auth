@@ -16,7 +16,7 @@ from adapters.clock import get_clock
 from oauth.models import Client
 from services import audit
 from services.redirect_uris import valid_redirect_uri
-from services.signing import random_token
+from services.signing import new_client_id, random_token
 
 SECRET_BYTES = 32
 
@@ -62,7 +62,7 @@ def create_confidential_client(
     uris = confidential_redirect_uris(redirect_uris)
     secret = random_token(SECRET_BYTES)
     client = Client.objects.create(
-        client_id=random_token(),
+        client_id=new_client_id(),
         name=name[:200],
         redirect_uris=uris,
         kind=Client.Kind.CONFIDENTIAL,

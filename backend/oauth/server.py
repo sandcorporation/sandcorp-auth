@@ -48,7 +48,7 @@ from services import audit
 from services.clients import find_client
 from services.oidc import CLAIMS_SUPPORTED
 from services.redirect_uris import ALLOWED_GRANT_TYPES, CLIENT_CREDENTIALS, valid_redirect_uri
-from services.signing import ALGORITHM, random_token
+from services.signing import ALGORITHM, new_client_id
 
 type JSON = str | int | float | bool | None | list[JSON] | dict[str, JSON]
 
@@ -257,7 +257,7 @@ class DynamicClientRegistration(ClientRegistrationEndpoint):  # type: ignore[mis
     def generate_client_info(self, request: JsonRequest) -> dict[str, JSON]:
         # No client secret: dynamically registered clients are public.
         return {
-            "client_id": random_token(),
+            "client_id": new_client_id(),
             "client_id_issued_at": int(get_clock().now().timestamp()),
         }
 
