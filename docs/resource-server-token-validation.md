@@ -162,7 +162,7 @@ portfolio(`https://sandcorp.co.kr/.well-known/oauth-protected-resource`):
 
 ```sh
 cd backend && uv run python manage.py clients create-confidential --name "뉴스 관리" --redirect-uri https://news.sandcorp.co.kr/auth/callback
-# 재발급: clients rotate-secret --client-id <id>   목록: clients list
+# 재발급: clients rotate-secret --client-id=<id>   목록: clients list
 ```
 
 admin(클라이언트 → 추가)에서도 만들 수 있다. 추가 폼은 기밀 클라이언트 전용(이름·리다이렉트 URI)이고, 저장 뒤 메시지로 시크릿을 한 번 보여 준다. 변경 화면의 「시크릿 재발급」 버튼도 같다.
@@ -346,7 +346,7 @@ def _deny(status: int, challenge: str) -> HttpResponse:
 
 ## 10. 일반 사용자를 받는 사이트
 
-대표만 받는 사이트(portfolio, 뉴스, metrics, MCP)는 이 절을 보지 않는다 — T11이 일반 사용자 토큰을 거른다. 일반 사용자(Sandcorp 계정, ADR 0003)도 받는 사이트(Sandcorp Flow 등)만 이 규칙을 쓴다. 그 사이트의 클라이언트는 auth 쪽에서 「일반 사용자 허용」이 켜져 있어야 한다(`manage.py clients members --client-id <id> --allow`, 조율자).
+대표만 받는 사이트(portfolio, 뉴스, metrics, MCP)는 이 절을 보지 않는다 — T11이 일반 사용자 토큰을 거른다. 일반 사용자(Sandcorp 계정, ADR 0003)도 받는 사이트(Sandcorp Flow 등)만 이 규칙을 쓴다. 그 사이트의 클라이언트는 auth 쪽에서 「일반 사용자 허용」이 켜져 있어야 한다(`manage.py clients members --client-id=<id> --allow`, 조율자).
 
 ### 클레임
 
@@ -407,8 +407,8 @@ A1~A4 위반은 401 `invalid_token`. 대표 전용 기능(그 사이트의 관�
 auth 운영자가 클라이언트마다 웹훅 URL(https만)을 정하면 서명 비밀이 **한 번만** 출력된다(`docs/operations.md` 11절). 사이트는 그 비밀을 env 등에 넣는다.
 
 ```bash
-python manage.py clients webhook --client-id <id> --url https://news.sandcorp.co.kr/auth/webhook
-# 비밀 재발급(옛 것은 즉시 무효): clients webhook --client-id <id> --rotate-secret
+python manage.py clients webhook --client-id=<id> --url https://news.sandcorp.co.kr/auth/webhook
+# 비밀 재발급(옛 것은 즉시 무효): clients webhook --client-id=<id> --rotate-secret
 ```
 
 ### 요청 모양
@@ -506,7 +506,7 @@ def verify_sandcorp_webhook(
 # 조율자(운영): client_id·client_secret이 한 번만 출력된다(DB에는 해시만)
 docker exec -it sandcorp-auth-web-1 python manage.py clients create-machine \
   --name "promptlab 스모크" --resource https://promptlab.sandcorp.co.kr/api --scope "<스코프> [<스코프> …]"
-# 재발급(옛 것은 즉시 무효): clients rotate-secret --client-id <id>   목록: clients list
+# 재발급(옛 것은 즉시 무효): clients rotate-secret --client-id=<id>   목록: clients list
 ```
 
 ```http

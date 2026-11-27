@@ -16,7 +16,7 @@ from oauth.models import Client
 from services import audit
 from services.confidential_clients import InvalidRedirectUri
 from services.redirect_uris import exact_loopback_redirect_uri
-from services.signing import random_token
+from services.signing import new_client_id
 
 
 def public_redirect_uris(uris: Iterable[str]) -> list[str]:
@@ -53,7 +53,7 @@ def create_public_client(
         raise ValueError("이름이 필요합니다")
     uris = public_redirect_uris(redirect_uris)
     client = Client.objects.create(
-        client_id=random_token(),
+        client_id=new_client_id(),
         name=name[:200],
         redirect_uris=uris,
         kind=Client.Kind.PUBLIC,
