@@ -58,12 +58,28 @@ def qr_svg(text: str) -> str:
     image = qrcode.make(text, image_factory=qrcode.image.svg.SvgPathImage, box_size=8)
     out = io.BytesIO()
     image.save(out)
-    return out.getvalue().decode()
+    # The page wraps it in a named role=img; the graphic itself is not read out again (#143).
+    return out.getvalue().decode().replace("<svg ", '<svg aria-hidden="true" ', 1)
 
 
 def current_code(device: TotpDevice) -> str:
     """The code an authenticator shows right now (tests use it with the frozen clock)."""
     return _totp(device).at(get_clock().now())
+
+
+def was_used(device: TotpDevice, code: str) -> bool:
+    """True if `code` is right for a step within drift that was already accepted: a replay,
+    refused by `accept_code`, which the login screen names as such (#141)."""
+    code = code.strip().replace(" ", "")
+    if device.last_used_counter is None or not (code.isdigit() and len(code) == 6):
+        return False
+    now = get_clock().now()
+    totp = _totp(device)
+    for offset in range(-DRIFT_STEPS, DRIFT_STEPS + 1):
+        at = now + timedelta(seconds=offset * STEP_SECONDS)
+        if totp.timecode(at) <= device.last_used_counter and hmac.compare_digest(totp.at(at), code):
+            return True
+    return False
 
 
 def accept_code(device: TotpDevice, code: str) -> bool:

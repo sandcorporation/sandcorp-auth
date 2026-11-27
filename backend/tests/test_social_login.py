@@ -620,7 +620,7 @@ def test_a_member_links_another_login(
     assert session_user(member_client) == member
     assert AuditEvent.objects.filter(kind=audit.IDENTITY_LINKED, actor=member.username).exists()
     page = member_client.get("/account/identities").content.decode()
-    assert "Kakao 로그인을 연결했습니다" in page
+    assert "카카오 로그인 수단을 연결했습니다" in page
 
 
 def test_a_member_links_github_and_sees_it_in_the_account_page(
@@ -631,7 +631,7 @@ def test_a_member_links_github_and_sees_it_in_the_account_page(
     response = link(member_client, fake_providers, "github")
     assert response.status_code == 302 and response["Location"] == "/account"
     page = member_client.get("/account").content.decode()
-    assert "GitHub 로그인을 연결했습니다" in page
+    assert "GitHub 로그인 수단을 연결했습니다" in page
     assert '<span class="sc-list-title">GitHub</span>' in page
     assert 'action="/account/identities/link/github"' not in page
 
@@ -690,12 +690,12 @@ def test_a_member_with_two_logins_unlinks_one(
     google = member.identities.get(provider="google")
     page = member_client.get("/account/identities").content.decode()
     assert 'aria-label="Google 로그인 해제"' in page
-    assert 'aria-label="Kakao 로그인 해제"' in page
+    assert 'aria-label="카카오 로그인 해제"' in page
     response = member_client.post(f"/account/identities/{google.pk}/unlink")
     assert response.status_code == 302
     assert list(member.identities.values_list("provider", flat=True)) == ["kakao"]
     assert (
-        "Google 로그인 연결을 해제했습니다."
+        "Google 로그인 수단을 해제했습니다."
         in member_client.get("/account/identities").content.decode()
     )
     event = AuditEvent.objects.get(kind=audit.IDENTITY_UNLINKED)

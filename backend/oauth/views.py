@@ -1,4 +1,5 @@
 import json
+from typing import Final, NotRequired, TypedDict
 from urllib.parse import urlencode, urlsplit
 
 from authlib.oauth2 import OAuth2Error
@@ -239,12 +240,7 @@ def _consent_screen(
     )
     user = request.user
     member = isinstance(user, User) and is_member(user)
-    if member and "login" in descriptions:
-        # The stored text is the owner-facing one; a member just signs in to the app.
-        descriptions["login"] = f"{client.name}에 로그인"
-    if member and "openid" in descriptions:
-        descriptions["openid"] = "계정 식별자"
-    scopes = [
+    scopes: list[_ConsentLine] = [
         {"name": name, "description": descriptions[name], "granted": name in granted}
         for name in grant.scopes
     ]
@@ -257,12 +253,15 @@ def _consent_screen(
     if member:
         assert isinstance(user, User)
         account_label = user.first_name or user.email or "Sandcorp 계정"
+        scopes = sorted((_member_line(line, client, user) for line in scopes), key=_member_order)
     else:
         account_label = user.get_username()
     context = {
         "account_label": account_label,
         "client_name": client.name,
-        "client_id": client.client_id if client.registered_via == Client.Via.CIMD else "",
+        "client_id": client.client_id
+        if client.registered_via == Client.Via.CIMD and not member
+        else "",
         "is_member": member,
         "shares": shares,
         "resource": grant.resource,
@@ -271,6 +270,37 @@ def _consent_screen(
         "action": request.get_full_path(),
     }
     return _no_store(render(request, "oauth/consent.html", context))
+
+
+class _ConsentLine(TypedDict):
+    name: str
+    description: str
+    granted: bool
+    value: NotRequired[str]  # a member's own value that goes to the app (or 「없음」)
+    tip: NotRequired[str]
+
+
+# A member's consent lines: one thing that goes to the app per line, login info in this order.
+_MEMBER_ORDER: Final = ("login", "openid", "profile", "email")
+
+
+def _member_line(line: _ConsentLine, client: Client, user: User) -> _ConsentLine:
+    match line["name"]:
+        case "login":
+            # The stored text is the owner-facing one; a member just signs in to the app.
+            return {**line, "description": f"{client.name}에 로그인"}
+        case "openid":
+            return {**line, "description": "이 앱에서 나를 알아보는 번호", "tip": "계정 식별자"}
+        case "profile":
+            return {**line, "description": "이름", "value": user.get_full_name() or "없음"}
+        case "email":
+            return {**line, "description": "이메일", "value": user.email or "없음"}
+    return line
+
+
+def _member_order(line: _ConsentLine) -> int:
+    name = line["name"]
+    return _MEMBER_ORDER.index(name) if name in _MEMBER_ORDER else len(_MEMBER_ORDER)
 
 
 def _authorization_error(request: HttpRequest, error: OAuth2Error) -> HttpResponse:

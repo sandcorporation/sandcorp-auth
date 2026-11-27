@@ -41,6 +41,7 @@ from accounts.models import ExternalIdentity, Member
 from accounts.session import allows_get
 from adapters.clock import get_clock
 from adapters.randomness import get_randomness
+from oauth.models import Client
 from services import audit
 from services.clients import find_client
 from services.members import ExternalProfile, IdentityTaken, create_member, is_member
@@ -237,13 +238,11 @@ def providers_with_email(profile: ExternalProfile) -> list[str]:
     users = User.objects.filter(pk__in=member_users, is_active=True).filter(
         Q(pk__in=by_account) | Q(pk__in=by_identity)
     )
-    providers = (
-        ExternalIdentity.objects.filter(user__in=users)
-        .values_list("provider", flat=True)
-        .distinct()
-    )
+    # In the order they were linked, first linked first (#144).
+    providers = ExternalIdentity.objects.filter(user__in=users).order_by("linked_at", "pk")
     labels = dict(ExternalIdentity.Provider.choices)
-    return sorted({str(labels.get(name, name)) for name in providers})
+    ordered = [str(labels.get(i.provider, i.provider)) for i in providers.only("provider")]
+    return list(dict.fromkeys(ordered))
 
 
 def sign_in(
@@ -353,18 +352,23 @@ def unlink_identity(user: User, identity_id: int, *, ip: str) -> str:
     return target.provider
 
 
+def authorize_client(next_url: str | None) -> Client | None:
+    """The active client of an `/authorize` request `next_url` (one `client_id`), else None."""
+    if not next_url:
+        return None
+    parts = urlsplit(next_url)
+    if parts.path != "/authorize":
+        return None
+    client_ids = parse_qs(parts.query).get("client_id", [])
+    if len(client_ids) != 1:
+        return None
+    return find_client(client_ids[0])
+
+
 def social_login_allowed(next_url: str | None) -> bool:
     """True when `next_url` is an `/authorize` request of an active client that allows
     members: only then may a person sign in (or up) with a social login."""
-    if not next_url:
-        return False
-    parts = urlsplit(next_url)
-    if parts.path != "/authorize":
-        return False
-    client_ids = parse_qs(parts.query).get("client_id", [])
-    if len(client_ids) != 1:
-        return False
-    client = find_client(client_ids[0])
+    client = authorize_client(next_url)
     return client is not None and client.allows_members
 
 
@@ -374,8 +378,8 @@ def account_login_next(next_url: str | None) -> str | None:
     `social_login_allowed` or none; 「내 계정」 for no `next`, the login's own screens and a
     path that does not open with GET; else `next_url` itself."""
     path = urlsplit(next_url or "").path
-    if path == "/authorize":
-        return None
+    if path == "/authorize" or path.startswith("/" + settings.ADMIN_PATH):
+        return None  # the admin signs in with the password + TOTP only (#144)
     if not next_url or path in LOGIN_PATHS or path.startswith("/login/"):
         return ACCOUNT_HOME
     return next_url if allows_get(path) else ACCOUNT_HOME

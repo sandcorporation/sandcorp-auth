@@ -26,7 +26,7 @@ pytestmark = pytest.mark.django_db
 
 type Who = Literal["member", "new", "new_same_email", "owner", "withdrawn"]
 
-NO_ACCOUNT = "아직 계정이 없습니다"
+NO_ACCOUNT = "이 로그인 수단으로 연결된 계정이 없습니다"
 
 
 @pytest.mark.parametrize(

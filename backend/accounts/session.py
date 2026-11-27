@@ -10,7 +10,9 @@ from collections.abc import Callable
 from typing import Final
 from urllib.parse import urlsplit
 
+from django.contrib import messages
 from django.contrib.auth.models import User
+from django.contrib.messages.storage.base import Message
 from django.http import HttpRequest
 from django.urls import Resolver404, resolve
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -18,11 +20,34 @@ from django.utils.http import url_has_allowed_host_and_scheme
 OWNER_ENROLLMENT_NOTICE = (
     "대표 계정은 비밀번호와 OTP 등록을 먼저 마쳐야 합니다. 비밀번호로 로그인해 OTP를 등록해 주세요."
 )
+LOGGED_OUT_NOTICE = "로그아웃했습니다."
+# The `extra_tags` of a message meant for the login screen: the screen shows only these and
+# leaves the rest (「내 계정」 saves, admin actions) for the screen they were written for (#141).
+LOGIN_MESSAGE_TAG = "login"
 PENDING_USER_KEY = "accounts.pending_user_id"
 NEXT_KEY = "accounts.next"
 # Views that answer POST only without a `require_POST` wrapper to see: the admin's logout runs
 # Django's `LogoutView` (POST only) inside a plain `AdminSite.logout` method (#145).
 POST_ONLY_VIEW_NAMES: Final = frozenset({"admin:logout"})
+
+
+def add_login_notice(request: HttpRequest, text: str) -> None:
+    messages.info(request, text, extra_tags=LOGIN_MESSAGE_TAG)
+
+
+def take_login_notices(request: HttpRequest) -> list[str]:
+    """The login screen's messages, consumed; every other message is queued again untouched."""
+    storage = messages.get_messages(request)
+    notices: list[str] = []
+    others: list[Message] = []
+    for message in storage:
+        if LOGIN_MESSAGE_TAG in (message.extra_tags or "").split():
+            notices.append(str(message.message))
+        else:
+            others.append(message)
+    for message in others:
+        messages.add_message(request, message.level, message.message, message.extra_tags)
+    return notices
 
 
 def pending_user(request: HttpRequest) -> User | None:

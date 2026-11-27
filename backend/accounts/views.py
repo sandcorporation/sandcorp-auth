@@ -1,9 +1,8 @@
 """Owner login: password → (TOTP setup | TOTP code) → Django login → `next`."""
 
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from django.conf import settings
-from django.contrib import messages
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
@@ -16,12 +15,16 @@ from django.utils.safestring import mark_safe
 from django.views.decorators.http import require_http_methods, require_POST
 
 from accounts.session import (
+    LOGGED_OUT_NOTICE,
     NEXT_KEY,
+    OWNER_ENROLLMENT_NOTICE,
     PENDING_USER_KEY,
+    add_login_notice,
     allows_get,
     pending_user,
     safe_next,
     same_origin_referer,
+    take_login_notices,
 )
 from accounts.social_views import social_buttons
 from core.http import client_ip
@@ -34,9 +37,10 @@ from services.login import (
     login_blocked,
     login_failed,
     login_succeeded,
+    totp_code_reused,
 )
 from services.members import account_label, is_member
-from services.social import social_login_allowed
+from services.social import authorize_client, social_login_allowed
 from services.step_up import is_weak_owner_session, mark_strong
 from services.totp import enrollment_device, is_enrolled, provisioning_uri, qr_svg, secret_of
 
@@ -50,7 +54,11 @@ def _finish(request: HttpRequest, user: User, *, enrolled_now: bool = False) -> 
     mark_strong(request)  # password + TOTP: the admin and owner-only grants open (#100)
     request.session.pop(PENDING_USER_KEY, None)
     request.session.pop(NEXT_KEY, None)
-    return redirect(target if isinstance(target, str) else "accounts:home")
+    # A `next` that GET cannot open (`/account/email`, `/logout`) would end on a 405 page:
+    # the default page instead, as a social login does (#141, `account_login_next`).
+    if not isinstance(target, str) or not allows_get(urlsplit(target).path):
+        return redirect("accounts:home")
+    return redirect(target)
 
 
 @require_http_methods(["GET", "POST"])
@@ -82,14 +90,20 @@ def login_view(request: HttpRequest) -> HttpResponse:
         if not wait:
             wait = login_failed(audit.LOGIN_PASSWORD_FAILED, username, ip, "password")
         error = locked_message(wait) if wait else "아이디 또는 비밀번호가 맞지 않습니다."
+    notices = take_login_notices(request)
+    signs_up = social_login_allowed(next_url)
+    app = authorize_client(next_url)
     context = {
         "error": error,
         "username": username,
         "next": next_url or "",
         "step_up": step_up,
-        "notices": [m.message for m in messages.get_messages(request)],
+        "notices": notices,
         "social": [] if step_up else social_buttons(next_url),
-        "signs_up": social_login_allowed(next_url),
+        "signs_up": signs_up,
+        "app_name": app.name if app is not None else "",
+        # Folded only where an app's member login is the screen (#141).
+        "owner_open": bool(error or username) or not signs_up or OWNER_ENROLLMENT_NOTICE in notices,
     }
     return render(request, "accounts/login.html", context)
 
@@ -100,19 +114,25 @@ def login_totp_view(request: HttpRequest) -> HttpResponse:
     if user is None or not is_enrolled(user):
         return redirect("accounts:login")
     error = None
+    error_title = "코드가 맞지 않습니다"
     if request.method == "POST":
         username, ip = user.get_username(), client_ip(request)
+        code = request.POST.get("code", "")
         wait = login_blocked(username, ip)
-        if not wait and check_totp_step(user, request.POST.get("code", "")):
+        if not wait and check_totp_step(user, code):
             return _finish(request, user)
+        reused = not wait and totp_code_reused(user, code)
         if not wait:
             wait = login_failed(audit.LOGIN_TOTP_FAILED, username, ip, "totp")
-        error = (
-            locked_message(wait)
-            if wait
-            else "인증 코드가 맞지 않습니다. 앱에 새로 뜬 코드를 넣어 주세요."
-        )
-    return render(request, "accounts/login_totp.html", {"error": error})
+        if wait:
+            error = locked_message(wait)
+        elif reused:
+            error_title = "이미 쓴 코드입니다"
+            error = "이미 쓴 코드입니다. 앱에 다음 코드가 뜨면 넣어 주세요."
+        else:
+            error = "인증 코드가 맞지 않습니다. 앱에 새로 뜬 코드를 넣어 주세요."
+    context = {"error": error, "error_title": error_title}
+    return render(request, "accounts/login_totp.html", context)
 
 
 @require_http_methods(["GET", "POST"])
@@ -146,9 +166,12 @@ def totp_setup_view(request: HttpRequest) -> HttpResponse:
 
 @require_POST
 def logout_view(request: HttpRequest) -> HttpResponse:
-    if request.user.is_authenticated:
+    signed_in = request.user.is_authenticated
+    if signed_in:
         audit.record(audit.LOGOUT, actor=request.user.get_username(), ip=client_ip(request))
     logout(request)
+    if signed_in:
+        add_login_notice(request, LOGGED_OUT_NOTICE)  # logouts land on the login screen (#141)
     target = request.POST.get("next", "")
     # Internal paths only: "/x" yes, "//host" and "/\\host" no.
     if target.startswith("/") and not target.startswith(("//", "/\\")):
