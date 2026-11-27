@@ -231,9 +231,17 @@ def live_family(consent: Consent) -> RefreshTokenFamily:
 
 
 def lock_live_consent(consent: Consent) -> bool:
-    """Lock `consent`'s row until the transaction ends; False when it is already revoked."""
+    """Lock `consent`'s account, then its row, until the transaction ends; False when it is
+    already revoked or no longer that account's (a merge moved it).
+
+    Account before consent is the one lock order (#145): a withdrawal and a member merge lock
+    the account first and then revoke or move its consents. Taking the consent first here
+    deadlocked them, since the family a code exchange stores also takes the account row."""
+    User.objects.select_for_update().filter(pk=consent.user_id).exists()
     return (
-        Consent.objects.select_for_update().filter(pk=consent.pk, revoked_at__isnull=True).exists()
+        Consent.objects.select_for_update()
+        .filter(pk=consent.pk, user_id=consent.user_id, revoked_at__isnull=True)
+        .exists()
     )
 
 

@@ -210,7 +210,8 @@ def admin_login_redirect(request: HttpRequest) -> HttpResponse:
 def csrf_failure(request: HttpRequest, reason: str = "") -> HttpResponse:
     """`CSRF_FAILURE_VIEW`: a page-expired screen whose retry is a plain GET (#106): the same
     path with its query when that path answers GET (the consent screen keeps its client,
-    redirect, scope and state), else the same-origin page that sent the form, else home."""
+    redirect, scope and state), else the same-origin page that sent the form, else home — the
+    admin's first screen for an admin path (#145: its POST-only buttons)."""
     retry = None
     if allows_get(request.path_info):
         retry = safe_next(request, request.get_full_path())
@@ -218,7 +219,10 @@ def csrf_failure(request: HttpRequest, reason: str = "") -> HttpResponse:
             retry = _with_posted_next(request, retry)
     if retry is None:
         retry = same_origin_referer(request)
-    return render(request, "accounts/csrf_failed.html", {"retry": retry or "/"}, status=403)
+    if retry is None:
+        admin_home = "/" + settings.ADMIN_PATH
+        retry = admin_home if request.path_info.startswith(admin_home) else "/"
+    return render(request, "accounts/csrf_failed.html", {"retry": retry}, status=403)
 
 
 def _with_posted_next(request: HttpRequest, path: str) -> str:

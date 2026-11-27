@@ -7,7 +7,8 @@ MySQL/InnoDB at READ COMMITTED: one active signing key, one live consent and one
 token family (unique indexes over generated marker columns, since MySQL has no partial
 indexes), one account per external identity (#35), throttle counters without deadlocks
 (upsert, not INSERT IGNORE), one winner for an authorization code or a refresh token, and no
-live refresh token family left on a consent revoked during a code exchange (#111).
+live refresh token family left on a consent revoked during a code exchange (#111), and no
+deadlock between a code exchange and a withdrawal or a merge (#145: account, then consent).
 """
 
 import itertools
@@ -29,6 +30,7 @@ from oauth.tokens import live_family
 from services import audit, throttle
 from services.consents import revoke_consent
 from services.members import ExternalProfile, IdentityTaken, create_member
+from services.merge import merge_member_into_owner
 from services.signing import ActiveSigningKeyExists, create_signing_key
 from services.social import SignInResult, link_identity, sign_in, unlink_identity
 from services.webhooks import deliver_due, set_webhook
@@ -268,3 +270,47 @@ def test_concurrent_withdrawals_withdraw_once_and_queue_one_webhook(
     reports = race(deliver_due)
     assert sum(r.delivered for r in reports if not isinstance(r, BaseException)) == 1, reports
     assert len(fake_webhooks.sent) == 1
+
+
+def _member_code(oauth_client: OAuthClient, provider_sub: str) -> tuple[User, str, str]:
+    member = make_member("kakao", provider_sub)
+    browser = Client()
+    browser.force_login(member)
+    code, verifier = obtain_authorization_code(browser, oauth_client, scope="login")
+    return member, code, verifier
+
+
+def _exchange_status(oauth_client: OAuthClient, code: str, verifier: str) -> int:
+    return _exchange(oauth_client, code, verifier).status_code
+
+
+def test_a_code_exchange_racing_a_withdrawal_or_a_merge_ends_without_deadlock(
+    owner: User, dcr_client: OAuthClient, signing_key: SigningKey, frozen_clock: FrozenClock
+) -> None:
+    """#145: the exchange locks the account before the consent, as a withdrawal and a merge do;
+    the other order deadlocked (one side rolled back). Either the exchange comes first (and its
+    family is revoked) or it waits and is refused."""
+    OAuthClient.objects.filter(pk=dcr_client.pk).update(allows_members=True)
+    dcr_client.refresh_from_db()
+    for index in range(ROUNDS):
+        member, code, verifier = _member_code(dcr_client, f"91{index}")
+        if index % 2:
+            other: Callable[[], object] = partial(
+                merge_member_into_owner, member.username, owner.username
+            )
+        else:
+            other = partial(withdraw_member, User.objects.get(pk=member.pk))
+        jobs: list[Callable[[], object]] = [
+            partial(_exchange_status, dcr_client, code, verifier),
+            other,
+        ]
+
+        results = race(partial(_take_turn, jobs, itertools.count()), threads=2)
+
+        assert all(not isinstance(r, BaseException) for r in results), results
+        assert [r for r in results if isinstance(r, int) and not isinstance(r, bool)] in (
+            [200],
+            [400],
+        ), results
+        assert not RefreshTokenFamily.objects.filter(user=member, revoked_at=None).exists()
+        ExternalIdentity.objects.filter(user=owner).delete()
